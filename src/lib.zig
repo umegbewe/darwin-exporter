@@ -24,7 +24,11 @@ pub const Error = error{
     SystemResources,
     InvalidArgument,
     UnknownError,
-    TimerUnsupported
+    TimerUnsupported,
+    CreateManagerFailed,
+    AddTCPFailed,
+    AddUDPFailed,
+    InvalidPID,
 } || std.mem.Allocator.Error;
 
 pub fn init() Error!void {
@@ -106,7 +110,7 @@ pub const Exporter = struct {
 fn metricsHandler(context: *anyopaque, req: *std.http.Server.Request, target: []const u8) anyerror![]const u8 {
     _ = req;
     _ = target;
-    
+
     const exporter = @as(*Exporter, @ptrCast(@alignCast(context)));
     return try exporter.collectOnce();
 }

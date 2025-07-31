@@ -7,6 +7,7 @@ const darwin = switch (builtin.os.tag) {
         pub const sysctl = @import("platform/sysctl.zig");
         pub const proc_info = @import("platform/proc_info.zig");
         pub const mach = @import("platform/mach.zig");
+        pub const net = @import("platform/nstat.zig");
     },
     else => @compileError("Unsupported platform"),
 };
@@ -47,6 +48,8 @@ pub const ProcessCollector = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, cfg: Config) !ProcessCollector {
+        try darwin.net.initNetworkStats(allocator);
+
         return ProcessCollector{
             .allocator = allocator,
             .config = cfg,
@@ -60,6 +63,7 @@ pub const ProcessCollector = struct {
         if (self.last_collection) |*collection| {
             collection.deinit();
         }
+        darwin.net.deinitNetworkStats();
     }
 
     pub fn collect(self: *ProcessCollector) ![]ProcessInfo {
@@ -155,6 +159,14 @@ pub const ProcessCollector = struct {
 
         const mem_info = try darwin.mach.getTaskMemoryInfo(pid);
 
+        const net = darwin.net.getProcessNetworkStats(pid) catch darwin.net.ProcessNetworkStats{
+            .pid = pid,
+            .rx_bytes = 0,
+            .tx_bytes = 0,
+            .rx_packets = 0,
+            .tx_packets = 0,
+        };
+
         const task_info = try darwin.proc_info.getTaskInfo(pid);
 
         const rusage_info = darwin.proc_info.getRusageInfo(pid) catch |err| blk: {
@@ -202,6 +214,10 @@ pub const ProcessCollector = struct {
             .syscalls_unix = task_info.pti_syscalls_unix,
             .messages_sent = task_info.pti_messages_sent,
             .messages_received = task_info.pti_messages_received,
+            .net_rx_bytes = net.rx_bytes,
+            .net_tx_bytes = net.tx_bytes,
+            .net_rx_packets = net.rx_packets,
+            .net_tx_packets = net.tx_packets,
             .cow_faults = task_info.pti_cow_faults,
             .faults = task_info.pti_faults,
             .pageins = pageins,
@@ -240,6 +256,13 @@ pub const ProcessCollector = struct {
             const cpu_percent = self.calculateCpuPercent(pid, task_info.pti_total_user, task_info.pti_total_system, current_time);
 
             const rusage_info = darwin.proc_info.getRusageInfo(pid) catch null;
+            const net = darwin.net.getProcessNetworkStats(pid) catch darwin.net.ProcessNetworkStats{
+                .pid = pid,
+                .rx_bytes = 0,
+                .tx_bytes = 0,
+                .rx_packets = 0,
+                .tx_packets = 0,
+            };
             const diskio_read = if (rusage_info) |r| r.ri_diskio_bytesread else 0;
             const diskio_written = if (rusage_info) |r| r.ri_diskio_byteswritten else 0;
             const phys_footprint = if (rusage_info) |r| r.ri_phys_footprint else 0;
@@ -268,6 +291,10 @@ pub const ProcessCollector = struct {
                 .syscalls_unix = task_info.pti_syscalls_unix,
                 .messages_sent = task_info.pti_messages_sent,
                 .messages_received = task_info.pti_messages_received,
+                .net_rx_bytes = net.rx_bytes,
+                .net_tx_bytes = net.tx_bytes,
+                .net_rx_packets = net.rx_packets,
+                .net_tx_packets = net.tx_packets,
                 .cow_faults = task_info.pti_cow_faults,
                 .faults = task_info.pti_faults,
                 .pageins = pageins,
@@ -300,6 +327,10 @@ pub const ProcessCollector = struct {
                 .syscalls_unix = 0,
                 .messages_sent = 0,
                 .messages_received = 0,
+                .net_rx_bytes = 0,
+                .net_tx_bytes = 0,
+                .net_rx_packets = 0,
+                .net_tx_packets = 0,
                 .cow_faults = 0,
                 .faults = 0,
                 .pageins = 0,
