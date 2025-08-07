@@ -7,18 +7,33 @@ const Config = config.Config;
 
 pub const MetricsFormatter = struct {
     allocator: std.mem.Allocator,
+    buffer: std.ArrayList(u8),
+    key_buffer: []u8,
 
-    pub fn init(allocator: std.mem.Allocator) MetricsFormatter {
-        return .{ .allocator = allocator };
+    const KEY_BUFFER_SIZE = 10 * 1024 * 1024;
+    const INITIAL_BUFFER_SIZE = 1 * 1024 * 1024;
+
+    pub fn init(allocator: std.mem.Allocator) !MetricsFormatter {
+        var buffer = std.ArrayList(u8).init(allocator);
+        try buffer.ensureTotalCapacity(INITIAL_BUFFER_SIZE);
+
+        return .{
+            .allocator = allocator,
+            .buffer = buffer,
+            .key_buffer = try allocator.alloc(u8, KEY_BUFFER_SIZE),
+        };
     }
 
     pub fn deinit(self: *MetricsFormatter) void {
-        _ = self;
+        self.buffer.deinit();
+        self.allocator.free(self.key_buffer);
     }
 
     pub fn format(self: *MetricsFormatter, processes: []const ProcessInfo, cfg: Config) ![]const u8 {
-        var buffer = std.ArrayList(u8).init(self.allocator);
-        errdefer buffer.deinit();
+        // clear buffer but keep allocated memory
+        self.buffer.clearRetainingCapacity();
+
+        const writer = self.buffer.writer();
 
         var groups = try self.groupProcesses(processes, cfg);
         defer self.freeGroups(&groups);
@@ -52,19 +67,18 @@ pub const MetricsFormatter = struct {
         };
 
         inline for (scalar_metrics) |metric_type| {
-            try self.writeScalarMetric(&buffer, metric_type, groups, cfg);
+            try self.writeScalarMetric(writer, metric_type, groups, cfg);
         }
 
         inline for (composite_metrics) |metric_type| switch (metric_type) {
-            .cpu_seconds_total => try self.writeCpuSecondsTotal(&buffer, groups, cfg),
+            .cpu_seconds_total => try self.writeCpuSecondsTotal(writer, groups, cfg),
             else => unreachable,
         };
 
-        try self.writeProcessCounts(&buffer, groups);
+        try self.writeProcessCounts(writer, groups);
+        try self.writeThreadMetrics(writer, groups);
 
-        try self.writeThreadMetrics(&buffer, groups);
-
-        return buffer.toOwnedSlice();
+        return try self.allocator.dupe(u8, self.buffer.items);
     }
 
     const ProcessGroup = struct {
@@ -85,7 +99,6 @@ pub const MetricsFormatter = struct {
 
         for (processes) |proc| {
             const group_key = try self.getGroupKey(proc, cfg.grouping);
-            defer self.allocator.free(group_key);
 
             const result = try groups.getOrPut(group_key);
             if (!result.found_existing) {
@@ -99,39 +112,41 @@ pub const MetricsFormatter = struct {
         return groups;
     }
 
-    fn getGroupKey(self: *MetricsFormatter, proc: ProcessInfo, grouping: config.ProcessGrouping) ![]u8 {
+    fn getGroupKey(self: *MetricsFormatter, proc: ProcessInfo, grouping: config.ProcessGrouping) ![]const u8 {
         if (grouping.custom_grouper) |grouper| {
-            return self.allocator.dupe(u8, grouper(proc));
+            return grouper(proc);
         }
 
-        var key_parts = std.ArrayList([]const u8).init(self.allocator);
-        defer key_parts.deinit();
+        var fbs = std.io.fixedBufferStream(self.key_buffer);
+        const writer = fbs.writer();
+
+        var first = true;
 
         if (grouping.by_name) {
-            try key_parts.append(proc.name);
+            try writer.writeAll(proc.name);
+            first = false;
         }
 
         if (grouping.by_user) {
-            try key_parts.append(proc.username);
+            if (!first) try writer.writeByte(':');
+            try writer.writeAll(proc.username);
+            first = false;
         }
 
         if (grouping.by_cmdline) {
+            if (!first) try writer.writeByte(':');
             var iter = std.mem.tokenizeAny(u8, proc.cmdline, " ");
             if (iter.next()) |cmd| {
-                try key_parts.append(cmd);
+                try writer.writeAll(cmd);
             }
         }
 
-        if (key_parts.items.len == 0) {
-            return self.allocator.dupe(u8, proc.name);
+        const written = fbs.getWritten();
+        if (written.len == 0) {
+            return proc.name;
         }
 
-        var key = std.ArrayList(u8).init(self.allocator);
-        for (key_parts.items, 0..) |part, i| {
-            if (i > 0) try key.append(':');
-            try key.appendSlice(part);
-        }
-        return key.toOwnedSlice();
+        return written;
     }
 
     fn freeGroups(self: *MetricsFormatter, groups: *GroupMap) void {
@@ -144,15 +159,15 @@ pub const MetricsFormatter = struct {
         groups.deinit();
     }
 
-    fn writeScalarMetric(self: *MetricsFormatter, buffer: *std.ArrayList(u8), metric_type: MetricType, groups: GroupMap, cfg: Config) !void {
+    fn writeScalarMetric(self: *MetricsFormatter, writer: anytype, metric_type: MetricType, groups: GroupMap, cfg: Config) !void {
         _ = cfg;
 
         const metric_name = metric_type.getName();
         const metric_help = metric_type.getHelp();
         const metric_prom_type = metric_type.getType();
 
-        try buffer.writer().print("# HELP process_{s} {s}\n", .{ metric_name, metric_help });
-        try buffer.writer().print("# TYPE process_{s} {s}\n", .{ metric_name, metric_prom_type });
+        try writer.print("# HELP process_{s} {s}\n", .{ metric_name, metric_help });
+        try writer.print("# TYPE process_{s} {s}\n", .{ metric_name, metric_prom_type });
 
         var it = groups.iterator();
         while (it.next()) |entry| {
@@ -164,14 +179,14 @@ pub const MetricsFormatter = struct {
             if (value) |v| {
                 const repr_proc = procs.items[0];
 
-                try buffer.writer().print(
+                try writer.print(
                     "process_{s}{{groupname=\"{s}\",name=\"{s}\",user=\"{s}\"}} {d}\n",
                     .{ metric_name, group_name, repr_proc.name, repr_proc.username, v },
                 );
             }
         }
 
-        try buffer.append('\n');
+        try writer.writeByte('\n');
     }
 
     fn aggregateScalarMetric(self: *MetricsFormatter, metric_type: MetricType, processes: []const ProcessInfo) !?f64 {
@@ -234,12 +249,12 @@ pub const MetricsFormatter = struct {
         };
     }
 
-    fn writeCpuSecondsTotal(self: *MetricsFormatter, buffer: *std.ArrayList(u8), groups: GroupMap, cfg: Config) !void {
+    fn writeCpuSecondsTotal(self: *MetricsFormatter, writer: anytype, groups: GroupMap, cfg: Config) !void {
         _ = self;
         _ = cfg;
 
-        try buffer.writer().print("# HELP process_cpu_seconds_total Total accumulated CPU time in seconds (split by mode=user|system)\n", .{});
-        try buffer.writer().print("# TYPE process_cpu_seconds_total counter\n", .{});
+        try writer.writeAll("# HELP process_cpu_seconds_total Total accumulated CPU time in seconds (split by mode=user|system)\n");
+        try writer.writeAll("# TYPE process_cpu_seconds_total counter\n");
 
         var it = groups.iterator();
         while (it.next()) |entry| {
@@ -255,24 +270,24 @@ pub const MetricsFormatter = struct {
             }
 
             const repr = procs.items[0];
-            try buffer.writer().print(
+            try writer.print(
                 "process_cpu_seconds_total{{groupname=\"{s}\",name=\"{s}\",user=\"{s}\",mode=\"user\"}} {d}\n",
                 .{ group_name, repr.name, repr.username, total_user },
             );
-            try buffer.writer().print(
+            try writer.print(
                 "process_cpu_seconds_total{{groupname=\"{s}\",name=\"{s}\",user=\"{s}\",mode=\"system\"}} {d}\n",
                 .{ group_name, repr.name, repr.username, total_sys },
             );
         }
 
-        try buffer.append('\n');
+        try writer.writeByte('\n');
     }
 
-    fn writeProcessCounts(self: *MetricsFormatter, buffer: *std.ArrayList(u8), groups: GroupMap) !void {
+    fn writeProcessCounts(self: *MetricsFormatter, writer: anytype, groups: GroupMap) !void {
         _ = self;
 
-        try buffer.appendSlice("# HELP process_num_procs Number of processes in this group\n");
-        try buffer.appendSlice("# TYPE process_num_procs gauge\n");
+        try writer.writeAll("# HELP process_num_procs Number of processes in this group\n");
+        try writer.writeAll("# TYPE process_num_procs gauge\n");
 
         var it = groups.iterator();
         while (it.next()) |entry| {
@@ -280,20 +295,20 @@ pub const MetricsFormatter = struct {
             const procs = entry.value_ptr.*;
             const repr_proc = procs.items[0];
 
-            try buffer.writer().print(
+            try writer.print(
                 "process_num_procs{{groupname=\"{s}\",name=\"{s}\",user=\"{s}\"}} {d}\n",
                 .{ group_name, repr_proc.name, repr_proc.username, procs.items.len },
             );
         }
 
-        try buffer.append('\n');
+        try writer.writeByte('\n');
     }
 
-    fn writeThreadMetrics(self: *MetricsFormatter, buffer: *std.ArrayList(u8), groups: GroupMap) !void {
+    fn writeThreadMetrics(self: *MetricsFormatter, writer: anytype, groups: GroupMap) !void {
         _ = self;
 
-        try buffer.appendSlice("# HELP process_threads Number of threads\n");
-        try buffer.appendSlice("# TYPE process_threads gauge\n");
+        try writer.writeAll("# HELP process_threads Number of threads\n");
+        try writer.writeAll("# TYPE process_threads gauge\n");
 
         var it = groups.iterator();
         while (it.next()) |entry| {
@@ -310,24 +325,24 @@ pub const MetricsFormatter = struct {
 
             const repr_proc = procs.items[0];
 
-            try buffer.writer().print(
+            try writer.print(
                 "process_threads{{groupname=\"{s}\",name=\"{s}\",user=\"{s}\",state=\"total\"}} {d}\n",
                 .{ group_name, repr_proc.name, repr_proc.username, total_threads },
             );
 
-            try buffer.writer().print(
+            try writer.print(
                 "process_threads{{groupname=\"{s}\",name=\"{s}\",user=\"{s}\",state=\"running\"}} {d}\n",
                 .{ group_name, repr_proc.name, repr_proc.username, running_threads },
             );
         }
-        try buffer.append('\n');
+        try writer.writeByte('\n');
     }
 };
 
 test "metrics formatter" {
     const allocator = std.testing.allocator;
 
-    var formatter = MetricsFormatter.init(allocator);
+    var formatter = try MetricsFormatter.init(allocator);
     defer formatter.deinit();
 
     var processes = [_]ProcessInfo{
@@ -366,4 +381,13 @@ test "metrics formatter" {
     try std.testing.expect(std.mem.indexOf(u8, output, "# HELP process_cpu_usage_percent") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "# TYPE process_cpu_usage_percent gauge") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "process_cpu_usage_percent{") != null);
+
+    // Test that buffer retains capacity after format
+    const old_capacity = formatter.buffer.capacity;
+    const output2 = try formatter.format(&processes, cfg);
+
+    defer allocator.free(output2);
+
+    // Capacity should be the same or larger, but not smaller
+    try std.testing.expect(formatter.buffer.capacity >= old_capacity);
 }

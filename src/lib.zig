@@ -43,7 +43,7 @@ pub fn createExporter(allocator: std.mem.Allocator, cfg: Config) Error!*Exporter
         .allocator = allocator,
         .config = cfg,
         .collector = try ProcessCollector.init(allocator, cfg),
-        .formatter = MetricsFormatter.init(allocator),
+        .formatter = try MetricsFormatter.init(allocator),
         .server = null,
     };
     return exporter;
