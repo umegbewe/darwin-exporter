@@ -20,8 +20,8 @@ pub const ProcessCollector = struct {
     allocator: std.mem.Allocator,
     config: Config,
     cpu_count: u32,
-    // page_size: u32,
     boot_time: i64,
+    user_cache: UserCache,
     last_collection: ?CollectionState = null,
 
     const CollectionState = struct {
@@ -56,6 +56,7 @@ pub const ProcessCollector = struct {
             .cpu_count = try darwin.sysctl.getCpuCount(),
             // .page_size = std.c.getpagesize(),
             .boot_time = try darwin.sysctl.getBootTime(),
+            .user_cache = UserCache.init(allocator),
         };
     }
 
@@ -63,6 +64,7 @@ pub const ProcessCollector = struct {
         if (self.last_collection) |*collection| {
             collection.deinit();
         }
+        self.user_cache.deinit();
         darwin.net.deinitNetworkStats();
     }
 
@@ -151,8 +153,7 @@ pub const ProcessCollector = struct {
         };
         errdefer self.allocator.free(cmdline);
 
-        const username = try self.getUserName(basic_info.pbi_uid);
-        errdefer self.allocator.free(username);
+        const username = try self.user_cache.getUserName(basic_info.pbi_uid);
 
         const cpu_info = try darwin.mach.getTaskCpuInfo(pid);
         const cpu_percent = self.calculateCpuPercent(pid, cpu_info.user_time, cpu_info.system_time, current_time);
@@ -192,12 +193,17 @@ pub const ProcessCollector = struct {
             .timestamp = current_time,
         });
 
+        // Duplicate the username string for this ProcessInfo
+        // we need to do this because ProcessInfo owns its strings
+        const username_dup = try self.allocator.dupe(u8, username);
+        errdefer self.allocator.free(username_dup);
+
         return ProcessInfo{
             .pid = pid,
             .ppid = basic_info.pbi_ppid,
             .name = name,
             .cmdline = cmdline,
-            .username = username,
+            .username = username_dup,
             .state = self.getProcessState(basic_info.pbi_status),
             .cpu_usage_percent = cpu_percent,
             .cpu_time_user = cpu_info.user_time,
@@ -242,8 +248,9 @@ pub const ProcessCollector = struct {
             try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(cmdline);
 
-        const username = try self.getUserName(basic_info.pbi_uid);
-        errdefer self.allocator.free(username);
+        const username = try self.user_cache.getUserName(basic_info.pbi_uid);
+        const username_dup = try self.allocator.dupe(u8, username);
+        errdefer self.allocator.free(username_dup);
 
         const task_info_result = try darwin.proc_info.getTaskInfoWithFallback(pid);
 
@@ -274,7 +281,7 @@ pub const ProcessCollector = struct {
                 .ppid = basic_info.pbi_ppid,
                 .name = name,
                 .cmdline = cmdline,
-                .username = username,
+                .username = username_dup,
                 .state = self.getProcessState(basic_info.pbi_status),
                 .cpu_usage_percent = cpu_percent,
                 .cpu_time_user = task_info.pti_total_user,
@@ -310,7 +317,7 @@ pub const ProcessCollector = struct {
                 .ppid = basic_info.pbi_ppid,
                 .name = name,
                 .cmdline = cmdline,
-                .username = username,
+                .username = username_dup,
                 .state = self.getProcessState(basic_info.pbi_status),
                 .cpu_usage_percent = 0,
                 .cpu_time_user = 0,
@@ -371,20 +378,6 @@ pub const ProcessCollector = struct {
         };
     }
 
-    fn getUserName(self: *ProcessCollector, uid: u32) ![]u8 {
-        const c = @cImport({
-            @cInclude("pwd.h");
-        });
-
-        const pwd = c.getpwuid(uid);
-        if (pwd == null) {
-            return std.fmt.allocPrint(self.allocator, "{d}", .{uid});
-        }
-
-        const name_len = std.mem.len(pwd.*.pw_name);
-        return self.allocator.dupe(u8, pwd.*.pw_name[0..name_len]);
-    }
-
     fn shouldIncludeProcess(self: *ProcessCollector, proc: ProcessInfo) !bool {
         for (self.config.exclude_patterns) |pattern| {
             if (try self.matchesPattern(proc.name, pattern)) {
@@ -417,6 +410,49 @@ pub const ProcessCollector = struct {
             proc.deinit(self.allocator);
         }
         self.allocator.free(processes);
+    }
+};
+
+const UserCache = struct {
+    cache: std.AutoHashMap(u32, []const u8),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) UserCache {
+        return .{
+            .cache = std.AutoHashMap(u32, []const u8).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *UserCache) void {
+        var iter = self.cache.iterator();
+        while (iter.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.cache.deinit();
+    }
+
+    pub fn getUserName(self: *UserCache, uid: u32) ![]const u8 {
+        if (self.cache.get(uid)) |name| {
+            return name;
+        }
+
+        const c = @cImport({
+            @cInclude("pwd.h");
+        });
+
+        const pwd = c.getpwuid(uid);
+        const name = if (pwd == null) blk: {
+            // User not found, use numeric ID
+            break :blk try std.fmt.allocPrint(self.allocator, "{d}", .{uid});
+        } else blk: {
+            // Copy username from passwd struct
+            const name_len = std.mem.len(pwd.*.pw_name);
+            break :blk try self.allocator.dupe(u8, pwd.*.pw_name[0..name_len]);
+        };
+
+        try self.cache.put(uid, name);
+        return name;
     }
 };
 
