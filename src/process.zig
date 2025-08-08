@@ -1,3 +1,4 @@
+//process.zig
 const std = @import("std");
 const builtin = @import("builtin");
 const config = @import("config.zig");
@@ -22,6 +23,7 @@ pub const ProcessCollector = struct {
     cpu_count: u32,
     boot_time: i64,
     user_cache: UserCache,
+    string_pool: StringPool,
     last_collection: ?CollectionState = null,
 
     const CollectionState = struct {
@@ -57,6 +59,7 @@ pub const ProcessCollector = struct {
             // .page_size = std.c.getpagesize(),
             .boot_time = try darwin.sysctl.getBootTime(),
             .user_cache = UserCache.init(allocator),
+            .string_pool = StringPool.init(allocator),
         };
     }
 
@@ -65,6 +68,7 @@ pub const ProcessCollector = struct {
             collection.deinit();
         }
         self.user_cache.deinit();
+        self.string_pool.deinit();
         darwin.net.deinitNetworkStats();
     }
 
@@ -91,7 +95,7 @@ pub const ProcessCollector = struct {
         errdefer new_collection.deinit();
 
         for (pids) |pid| {
-            const proc_info = try self.collectProcessHybrid(pid, current_time, &new_collection, &stats);
+            const proc_info = try self.collectProcess(pid, current_time, &new_collection);
 
             if (proc_info) |info| {
                 if (try self.shouldIncludeProcess(info)) {
@@ -116,124 +120,14 @@ pub const ProcessCollector = struct {
         return processes.toOwnedSlice();
     }
 
-    fn collectProcessHybrid(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState, stats: *CollectionStats) !?ProcessInfo {
-        if (self.collectProcess(pid, current_time, new_collection)) |info| {
-            stats.full_quality += 1;
-            return info;
-        } else |err| switch (err) {
-            error.AccessDenied => {
-                if (self.collectProcessDegraded(pid, current_time, new_collection)) |info| {
-                    stats.degraded_quality += 1;
-                    return info;
-                } else |fallback_err| {
-                    std.log.debug("Failed degraded collection for PID {}: {s}", .{ pid, @errorName(fallback_err) });
-                    return null;
-                }
-            },
-            error.InvalidPid => return null,
-            else => return err,
-        }
-    }
-
     fn collectProcess(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState) !?ProcessInfo {
-        const basic_info = try darwin.proc_info.getBasicInfo(pid);
-
-        if (basic_info.pbi_flags & 0x4 != 0) {
-            return null;
-        }
-
-        const name = try darwin.proc_info.getProcessName(self.allocator, pid);
-        errdefer self.allocator.free(name);
-
-        const cmdline = darwin.proc_info.getProcessCmdline(self.allocator, pid) catch |err| blk: {
-            switch (err) {
-                error.SystemError => break :blk try self.allocator.dupe(u8, name),
-                else => return err,
-            }
-        };
-        errdefer self.allocator.free(cmdline);
-
-        const username = try self.user_cache.getUserName(basic_info.pbi_uid);
-
-        const cpu_info = try darwin.mach.getTaskCpuInfo(pid);
-        const cpu_percent = self.calculateCpuPercent(pid, cpu_info.user_time, cpu_info.system_time, current_time);
-
-        const mem_info = try darwin.mach.getTaskMemoryInfo(pid);
-
-        const net = darwin.net.getProcessNetworkStats(pid) catch darwin.net.ProcessNetworkStats{
-            .pid = pid,
-            .rx_bytes = 0,
-            .tx_bytes = 0,
-            .rx_packets = 0,
-            .tx_packets = 0,
-        };
-
-        const task_info = try darwin.proc_info.getTaskInfo(pid);
-
-        const rusage_info = darwin.proc_info.getRusageInfo(pid) catch |err| blk: {
-            std.log.debug("Failed to get rusage for PID {}: {s}", .{ pid, @errorName(err) });
-            break :blk null;
-        };
-
-        const diskio_read = if (rusage_info) |r| r.ri_diskio_bytesread else 0;
-        const diskio_written = if (rusage_info) |r| r.ri_diskio_byteswritten else 0;
-        const phys_footprint = if (rusage_info) |r| r.ri_phys_footprint else 0;
-        const pageins = if (rusage_info) |r| r.ri_pageins else 0;
-
-        const fd_count = if (self.config.collect_fd)
-            darwin.proc_info.getFdCount(pid) catch 0
-        else
-            0;
-
-        const thread_count = darwin.proc_info.getThreadCount(pid) catch 1;
-
-        try new_collection.processes.put(pid, ProcessSnapshot{
-            .cpu_user_us = cpu_info.user_time,
-            .cpu_sys_us = cpu_info.system_time,
-            .timestamp = current_time,
-        });
-
-        // Duplicate the username string for this ProcessInfo
-        // we need to do this because ProcessInfo owns its strings
-        const username_dup = try self.allocator.dupe(u8, username);
-        errdefer self.allocator.free(username_dup);
-
-        return ProcessInfo{
-            .pid = pid,
-            .ppid = basic_info.pbi_ppid,
-            .name = name,
-            .cmdline = cmdline,
-            .username = username_dup,
-            .state = self.getProcessState(basic_info.pbi_status),
-            .cpu_usage_percent = cpu_percent,
-            .cpu_time_user = cpu_info.user_time,
-            .cpu_time_system = cpu_info.system_time,
-            .memory_rss = mem_info.resident_size,
-            .memory_vms = mem_info.virtual_size,
-            .diskio_bytes_read = diskio_read,
-            .diskio_bytes_write = diskio_written,
-            .num_fds = fd_count,
-            .num_threads = thread_count,
-            .num_threads_running = @intCast(task_info.pti_numrunning),
-            .context_switches = task_info.pti_csw,
-            .syscalls_mach = task_info.pti_syscalls_mach,
-            .syscalls_unix = task_info.pti_syscalls_unix,
-            .messages_sent = task_info.pti_messages_sent,
-            .messages_received = task_info.pti_messages_received,
-            .net_rx_bytes = net.rx_bytes,
-            .net_tx_bytes = net.tx_bytes,
-            .net_rx_packets = net.rx_packets,
-            .net_tx_packets = net.tx_packets,
-            .cow_faults = task_info.pti_cow_faults,
-            .faults = task_info.pti_faults,
-            .pageins = pageins,
-            .phys_footprint = phys_footprint,
-            .priority = @intCast(task_info.pti_priority),
-            .start_time = @intCast(basic_info.pbi_start_tvsec),
+        return self.collectProcessProcInfo(pid, current_time, new_collection) catch |err| switch (err) {
+            error.AccessDenied, error.InvalidPid => null,
+            else => return err,
         };
     }
 
-    fn collectProcessDegraded(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState) !?ProcessInfo {
+    fn collectProcessProcInfo(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState) !?ProcessInfo {
         const basic_info = try darwin.proc_info.getBasicInfo(pid);
 
         // skip kernel threads
@@ -241,11 +135,12 @@ pub const ProcessCollector = struct {
             return null;
         }
 
-        const name = try darwin.proc_info.getProcessName(self.allocator, pid);
-        errdefer self.allocator.free(name);
+        const name_tmp = try darwin.proc_info.getProcessName(self.allocator, pid);
+        defer self.allocator.free(name_tmp);
+        const name = try self.string_pool.intern(name_tmp);
 
         const cmdline = darwin.proc_info.getProcessCmdline(self.allocator, pid) catch
-            try self.allocator.dupe(u8, name);
+            try self.allocator.dupe(u8, name_tmp);
         errdefer self.allocator.free(cmdline);
 
         const username = try self.user_cache.getUserName(basic_info.pbi_uid);
@@ -346,6 +241,112 @@ pub const ProcessCollector = struct {
                 .start_time = @intCast(basic_info.pbi_start_tvsec),
             };
         }
+    }
+
+    fn collectProcessMach(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState) !?ProcessInfo {
+        const basic_info = try darwin.proc_info.getBasicInfo(pid);
+
+        if (basic_info.pbi_flags & 0x4 != 0) {
+            return null;
+        }
+
+        // get process name and intern it
+        const name_tmp = try darwin.proc_info.getProcessName(self.allocator, pid);
+        defer self.allocator.free(name_tmp);
+        const name = try self.string_pool.intern(name_tmp);
+
+        const cmdline = darwin.proc_info.getProcessCmdline(self.allocator, pid) catch |err| blk: {
+            switch (err) {
+                error.SystemError => break :blk try self.allocator.dupe(u8, name_tmp),
+                else => return err,
+            }
+        };
+        errdefer self.allocator.free(cmdline);
+
+        const username = try self.user_cache.getUserName(basic_info.pbi_uid);
+
+        const cpu_info = try darwin.mach.getTaskCpuInfo(pid);
+        const cpu_percent = self.calculateCpuPercent(pid, cpu_info.user_time, cpu_info.system_time, current_time);
+
+        const mem_info = try darwin.mach.getTaskMemoryInfo(pid);
+
+        const net = darwin.net.getProcessNetworkStats(pid) catch darwin.net.ProcessNetworkStats{
+            .pid = pid,
+            .rx_bytes = 0,
+            .tx_bytes = 0,
+            .rx_packets = 0,
+            .tx_packets = 0,
+        };
+
+        const task_info = try darwin.proc_info.getTaskInfo(pid);
+
+        const rusage_info = darwin.proc_info.getRusageInfo(pid) catch |err| blk: {
+            std.log.debug("Failed to get rusage for PID {}: {s}", .{ pid, @errorName(err) });
+            break :blk null;
+        };
+
+        const diskio_read = if (rusage_info) |r| r.ri_diskio_bytesread else 0;
+        const diskio_written = if (rusage_info) |r| r.ri_diskio_byteswritten else 0;
+        const phys_footprint = if (rusage_info) |r| r.ri_phys_footprint else 0;
+        const pageins = if (rusage_info) |r| r.ri_pageins else 0;
+
+        const fd_count = if (self.config.collect_fd)
+            darwin.proc_info.getFdCount(pid) catch 0
+        else
+            0;
+
+        const thread_count = darwin.proc_info.getThreadCount(pid) catch 1;
+
+        try new_collection.processes.put(pid, ProcessSnapshot{
+            .cpu_user_us = cpu_info.user_time,
+            .cpu_sys_us = cpu_info.system_time,
+            .timestamp = current_time,
+        });
+
+        // Duplicate the username string for this ProcessInfo
+        // we need to do this because ProcessInfo owns its strings
+        // const name_dup = try self.allocator.dupe(u8, name);
+        // const cmdline_dup = try self.allocator.dupe(u8, cmdline);
+        const username_dup = try self.allocator.dupe(u8, username);
+        errdefer {
+            // self.allocator.free(name_dup);
+            // self.allocator.free(cmdline_dup);
+            self.allocator.free(username_dup);
+        }
+
+        return ProcessInfo{
+            .pid = pid,
+            .ppid = basic_info.pbi_ppid,
+            .name = name,
+            .cmdline = cmdline,
+            .username = username_dup,
+            .state = self.getProcessState(basic_info.pbi_status),
+            .cpu_usage_percent = cpu_percent,
+            .cpu_time_user = cpu_info.user_time,
+            .cpu_time_system = cpu_info.system_time,
+            .memory_rss = mem_info.resident_size,
+            .memory_vms = mem_info.virtual_size,
+            .diskio_bytes_read = diskio_read,
+            .diskio_bytes_write = diskio_written,
+            .num_fds = fd_count,
+            .num_threads = thread_count,
+            .num_threads_running = @intCast(task_info.pti_numrunning),
+            .context_switches = task_info.pti_csw,
+            .syscalls_mach = task_info.pti_syscalls_mach,
+            .syscalls_unix = task_info.pti_syscalls_unix,
+            .messages_sent = task_info.pti_messages_sent,
+            .messages_received = task_info.pti_messages_received,
+            .net_rx_bytes = net.rx_bytes,
+            .net_tx_bytes = net.tx_bytes,
+            .net_rx_packets = net.rx_packets,
+            .net_tx_packets = net.tx_packets,
+            .cow_faults = task_info.pti_cow_faults,
+            .faults = task_info.pti_faults,
+            .pageins = pageins,
+            .phys_footprint = phys_footprint,
+            .priority = @intCast(task_info.pti_priority),
+            .start_time = @intCast(basic_info.pbi_start_tvsec),
+        };
     }
 
     fn calculateCpuPercent(self: *ProcessCollector, pid: i32, user_us: u64, sys_us: u64, now: i64) f64 {
@@ -453,6 +454,33 @@ const UserCache = struct {
 
         try self.cache.put(uid, name);
         return name;
+    }
+};
+
+//deduplicates common strings (process names, cmdlines)
+const StringPool = struct {
+    strings: std.StringHashMap([]const u8),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) StringPool {
+        return .{ .strings = std.StringHashMap([]const u8).init(allocator), .allocator = allocator };
+    }
+
+    pub fn deinit(self: *StringPool) void {
+        var iter = self.strings.iterator();
+        while (iter.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.strings.deinit();
+    }
+
+    pub fn intern(self: *StringPool, str: []const u8) ![]const u8 {
+        if (self.strings.get(str)) |existing| {
+            return existing;
+        }
+        const copy = try self.allocator.dupe(u8, str);
+        try self.strings.put(copy, copy);
+        return copy;
     }
 };
 
