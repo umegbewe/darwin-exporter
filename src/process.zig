@@ -1,7 +1,7 @@
-//process.zig
 const std = @import("std");
 const builtin = @import("builtin");
 const config = @import("config.zig");
+const cache = @import("cache.zig");
 
 const darwin = switch (builtin.os.tag) {
     .macos => struct {
@@ -22,9 +22,14 @@ pub const ProcessCollector = struct {
     config: Config,
     cpu_count: u32,
     boot_time: i64,
-    user_cache: UserCache,
+    name_cache: ProcessNameCache,
+    user_cache: ProcessUsernameCache,
+    cmd_cache: ProcessCmdlineCache,
     string_pool: StringPool,
     last_collection: ?CollectionState = null,
+    // reusable pid buffer to avoid per-scrape allocations
+    pid_buf: []i32 = &.{},
+    pid_capacity: usize = 0,
 
     const CollectionState = struct {
         time: i64,
@@ -58,7 +63,9 @@ pub const ProcessCollector = struct {
             .cpu_count = try darwin.sysctl.getCpuCount(),
             // .page_size = std.c.getpagesize(),
             .boot_time = try darwin.sysctl.getBootTime(),
-            .user_cache = UserCache.init(allocator),
+            .name_cache = ProcessNameCache.init(allocator),
+            .user_cache = ProcessUsernameCache.init(allocator),
+            .cmd_cache = ProcessCmdlineCache.init(allocator),
             .string_pool = StringPool.init(allocator),
         };
     }
@@ -67,18 +74,28 @@ pub const ProcessCollector = struct {
         if (self.last_collection) |*collection| {
             collection.deinit();
         }
+        self.name_cache.deinit();
         self.user_cache.deinit();
+        self.cmd_cache.deinit(); //no-op for values (already interned)
         self.string_pool.deinit();
+        if (self.pid_capacity != 0) self.allocator.free(self.pid_buf);
         darwin.net.deinitNetworkStats();
     }
 
     pub fn collect(self: *ProcessCollector) ![]ProcessInfo {
-        const pids = try darwin.sysctl.getAllPids(self.allocator);
-        defer self.allocator.free(pids);
+        self.cmd_cache.beginRound();
+        defer self.cmd_cache.sweep();
+
+        self.name_cache.beginRound();
+        defer self.name_cache.sweep();
+
+        const pids = try darwin.sysctl.listAllPids(self.allocator, &self.pid_buf, &self.pid_capacity);
 
         var stats = CollectionStats{ .total_pids = pids.len };
 
         var processes = std.ArrayList(ProcessInfo).init(self.allocator);
+        try processes.ensureTotalCapacityPrecise(pids.len);
+
         errdefer {
             for (processes.items) |*proc| {
                 proc.deinit(self.allocator);
@@ -135,17 +152,33 @@ pub const ProcessCollector = struct {
             return null;
         }
 
-        const name_tmp = try darwin.proc_info.getProcessName(self.allocator, pid);
-        defer self.allocator.free(name_tmp);
-        const name = try self.string_pool.intern(name_tmp);
+        const upid = Upid{
+            .pid = pid,
+            .start_sec = @as(i64, @intCast(basic_info.pbi_start_tvsec)),
+            .start_usec = @as(i64, @intCast(basic_info.pbi_start_tvusec)),
+        };
 
-        const cmdline = darwin.proc_info.getProcessCmdline(self.allocator, pid) catch
-            try self.allocator.dupe(u8, name_tmp);
-        errdefer self.allocator.free(cmdline);
+        const name: []const u8 = blk: {
+            if (self.name_cache.get(upid)) |n| break :blk n;
 
-        const username = try self.user_cache.getUserName(basic_info.pbi_uid);
-        const username_dup = try self.allocator.dupe(u8, username);
-        errdefer self.allocator.free(username_dup);
+            var buf: [darwin.proc_info.MaxProcNameLen]u8 = undefined;
+            const slice = try darwin.proc_info.getProcessName(pid, &buf);
+            const interned = try self.string_pool.intern(slice);
+            try self.name_cache.put(upid, interned);
+            break :blk interned;
+        };
+
+        const cmdline: []const u8 = blk: {
+            if (self.cmd_cache.get(upid)) |s| break :blk s;
+
+            const tmp = darwin.proc_info.getProcessCmdline(self.allocator, pid) catch
+                try self.allocator.dupe(u8, name);
+
+            try self.cmd_cache.put(upid, tmp);
+            break :blk tmp;
+        };
+
+        const username = try getUserName(&self.user_cache, basic_info.pbi_uid);
 
         const task_info_result = try darwin.proc_info.getTaskInfoWithFallback(pid);
 
@@ -176,7 +209,7 @@ pub const ProcessCollector = struct {
                 .ppid = basic_info.pbi_ppid,
                 .name = name,
                 .cmdline = cmdline,
-                .username = username_dup,
+                .username = username,
                 .state = self.getProcessState(basic_info.pbi_status),
                 .cpu_usage_percent = cpu_percent,
                 .cpu_time_user = task_info.pti_total_user,
@@ -212,7 +245,7 @@ pub const ProcessCollector = struct {
                 .ppid = basic_info.pbi_ppid,
                 .name = name,
                 .cmdline = cmdline,
-                .username = username_dup,
+                .username = username,
                 .state = self.getProcessState(basic_info.pbi_status),
                 .cpu_usage_percent = 0,
                 .cpu_time_user = 0,
@@ -305,14 +338,8 @@ pub const ProcessCollector = struct {
 
         // Duplicate the username string for this ProcessInfo
         // we need to do this because ProcessInfo owns its strings
-        // const name_dup = try self.allocator.dupe(u8, name);
-        // const cmdline_dup = try self.allocator.dupe(u8, cmdline);
         const username_dup = try self.allocator.dupe(u8, username);
-        errdefer {
-            // self.allocator.free(name_dup);
-            // self.allocator.free(cmdline_dup);
-            self.allocator.free(username_dup);
-        }
+        errdefer self.allocator.free(username_dup);
 
         return ProcessInfo{
             .pid = pid,
@@ -414,48 +441,48 @@ pub const ProcessCollector = struct {
     }
 };
 
-const UserCache = struct {
-    cache: std.AutoHashMap(u32, []const u8),
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator) UserCache {
-        return .{
-            .cache = std.AutoHashMap(u32, []const u8).init(allocator),
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *UserCache) void {
-        var iter = self.cache.iterator();
-        while (iter.next()) |entry| {
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.cache.deinit();
-    }
-
-    pub fn getUserName(self: *UserCache, uid: u32) ![]const u8 {
-        if (self.cache.get(uid)) |name| {
-            return name;
-        }
-
-        const c = @cImport({
-            @cInclude("pwd.h");
-        });
-
-        const pwd = c.getpwuid(uid);
-        const name = if (pwd == null) blk: {
-            // User not found, use numeric ID
-            break :blk try std.fmt.allocPrint(self.allocator, "{d}", .{uid});
-        } else blk: {
-            // Copy username from passwd struct
-            const name_len = std.mem.len(pwd.*.pw_name);
-            break :blk try self.allocator.dupe(u8, pwd.*.pw_name[0..name_len]);
-        };
-
-        try self.cache.put(uid, name);
+pub fn getUserName(self: *ProcessUsernameCache, uid: u32) ![]const u8 {
+    if (self.get(uid)) |name| {
         return name;
     }
+
+    const c = @cImport({
+        @cInclude("pwd.h");
+    });
+
+    const pwd = c.getpwuid(uid);
+    const name = if (pwd == null) blk: {
+        // User not found, use numeric ID
+        break :blk try std.fmt.allocPrint(self.allocator, "{d}", .{uid});
+    } else blk: {
+        // Copy username from passwd struct
+        const name_len = std.mem.len(pwd.*.pw_name);
+        break :blk try self.allocator.dupe(u8, pwd.*.pw_name[0..name_len]);
+    };
+
+    try self.put(uid, name);
+    return name;
+}
+
+const Upid = struct { 
+    pid: i32, 
+    start_sec: i64, 
+    start_usec: i64 
 };
+
+// names are interned in string_pool need to rethink this
+const ProcessNameCache = cache.Cache(Upid, []const u8, null);
+
+// usernames are owned here, free on sweep/deinit
+const ProcessUsernameCache = cache.Cache(u32, []const u8, freeOwnedSlice);
+
+// cmdlines are owned here, free on sweep/deinit
+const ProcessCmdlineCache = cache.Cache(Upid, []const u8, freeOwnedSlice);
+
+// helper to free owned slices
+fn freeOwnedSlice(allocator: std.mem.Allocator, s: []const u8) void {
+    allocator.free(s);
+}
 
 //deduplicates common strings (process names, cmdlines)
 const StringPool = struct {

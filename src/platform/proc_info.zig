@@ -9,16 +9,16 @@ const c = @cImport({
 
 pub const ProcError = error{ InvalidPid, BufferTooSmall, SystemError, AccessDenied };
 
-pub fn getProcessName(allocator: std.mem.Allocator, pid: i32) ![]u8 {
-    var name_buf: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined;
+pub const MaxProcNameLen: usize = @intCast(c.PROC_PIDPATHINFO_MAXSIZE);
 
-    const ret = c.proc_name(pid, &name_buf, name_buf.len);
+pub fn getProcessName(pid: i32, buf: *[MaxProcNameLen]u8) ![]const u8 {
+    const ret = c.proc_name(pid, buf, buf.len);
     if (ret <= 0) {
         return ProcError.InvalidPid;
     }
 
-    const name_len = std.mem.indexOfScalar(u8, &name_buf, 0) orelse name_buf.len;
-    return try allocator.dupe(u8, name_buf[0..name_len]);
+    const name_len = std.mem.indexOfScalar(u8, buf, 0) orelse buf.len;
+    return buf[0..name_len];
 }
 
 pub fn getProcessPath(allocator: std.mem.Allocator, pid: i32) ![]u8 {
@@ -115,7 +115,7 @@ pub fn getProcessCmdline(allocator: std.mem.Allocator, pid: i32) ![]u8 {
 
     // Some genius thought it was a good idea to dump random NULL's
     // skip ALL nulls between exec path and argv[0]
-    // there can be multiple nulls here (typically 2-3)
+    // there can be multiple nulls here
     while (idx < arg_size and buffer[idx] == 0) : (idx += 1) {}
 
     var cmdline = std.ArrayList(u8).init(allocator);

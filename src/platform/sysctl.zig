@@ -53,6 +53,32 @@ pub fn getAllPids(allocator: std.mem.Allocator) ![]i32 {
     return pids;
 }
 
+pub fn listAllPids(allocator: std.mem.Allocator, buf: *[]i32, capacity: *usize) ![]i32 {
+    var bytes: c_int = c.proc_listpids(c.PROC_ALL_PIDS, 0, null, 0);
+    if (bytes <= 0) return errno_to_error();
+
+    const required_bytes: usize = @intCast(bytes);
+    const required_count: usize = required_bytes / @sizeOf(i32);
+
+    if (capacity.* < required_count) {
+        if (capacity.* == 0) {
+            buf.* = try allocator.alloc(i32, required_count);
+        } else {
+            buf.* = try allocator.realloc(buf.*, required_count);
+        }
+        capacity.* = required_count;
+    }
+
+    const bufsize_bytes: c_int = @intCast(capacity.* * @sizeOf(i32));
+    bytes = c.proc_listpids(c.PROC_ALL_PIDS, 0, buf.*.ptr, bufsize_bytes);
+    if (bytes <= 0) return errno_to_error();
+
+    const got_bytes: usize = @intCast(bytes);
+
+    const count: usize = got_bytes / @sizeOf(c.pid_t);
+    return buf.*[0..count];
+}
+
 pub fn getProcessInfo(pid: i32) !c.struct_kinfo_proc {
     var mib = [_]c_int{ c.CTL_KERN, c.KERN_PROC, c.KERN_PROC_PID, pid };
     var info: c.struct_kinfo_proc = undefined;

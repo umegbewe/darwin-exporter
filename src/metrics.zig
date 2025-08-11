@@ -10,7 +10,7 @@ pub const MetricsFormatter = struct {
     buffer: std.ArrayList(u8),
     key_buffer: []u8,
 
-    const KEY_BUFFER_SIZE = 10 * 1024 * 1024;
+    const KEY_BUFFER_SIZE = 64 * 1024;
     const INITIAL_BUFFER_SIZE = 1 * 1024 * 1024;
 
     pub fn init(allocator: std.mem.Allocator) !MetricsFormatter {
@@ -78,7 +78,7 @@ pub const MetricsFormatter = struct {
         try self.writeProcessCounts(writer, groups);
         try self.writeThreadMetrics(writer, groups);
 
-        return try self.allocator.dupe(u8, self.buffer.items);
+        return self.buffer.items;
     }
 
     const ProcessGroup = struct {

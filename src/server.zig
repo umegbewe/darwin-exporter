@@ -78,6 +78,7 @@ pub const Server = struct {
                     }) catch {};
                     continue;
                 };
+                // defer self.allocator.free(response_body);
                 request.respond(response_body, .{
                     .status = .ok,
                     .extra_headers = &prom_headers,

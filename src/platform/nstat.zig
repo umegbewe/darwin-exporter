@@ -124,8 +124,6 @@ const NetworkStatsManager = struct {
         self.socket_map.deinit();
 
         self.stats_map.deinit();
-        // We don't need to release source_added_block since it's stack allocated
-        // and copied by the runtime
         self.allocator.destroy(self);
     }
 };
