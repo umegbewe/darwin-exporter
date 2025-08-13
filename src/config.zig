@@ -94,9 +94,8 @@ pub const ProcessInfo = struct {
     start_time: i64,
 
     pub fn deinit(self: *ProcessInfo, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
-        allocator.free(self.cmdline);
-        allocator.free(self.username);
+        _ = self;
+        _ = allocator;
     }
 };
 
@@ -230,7 +229,7 @@ test "ProcessState string conversion" {
 }
 
 test "MetricType properties" {
-    try std.testing.expectEqualStrings("cpu_seconds_user", MetricType.cpu_time_user.getName());
-    try std.testing.expectEqualStrings("counter", MetricType.cpu_time_user.getType());
+    try std.testing.expectEqualStrings("cpu_seconds_total", MetricType.cpu_seconds_total.getName());
+    try std.testing.expectEqualStrings("counter", MetricType.cpu_seconds_total.getType());
     try std.testing.expectEqualStrings("gauge", MetricType.memory_rss.getType());
 }

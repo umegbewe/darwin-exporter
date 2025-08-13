@@ -46,14 +46,6 @@ pub const ProcessCollector = struct {
         timestamp: i64,
     };
 
-    const CollectionStats = struct {
-        total_pids: usize = 0,
-        collected: usize = 0,
-        full_quality: usize = 0,
-        degraded_quality: usize = 0,
-        skipped: usize = 0,
-    };
-
     pub fn init(allocator: std.mem.Allocator, cfg: Config) !ProcessCollector {
         try darwin.net.initNetworkStats(allocator);
 
@@ -91,8 +83,6 @@ pub const ProcessCollector = struct {
 
         const pids = try darwin.sysctl.listAllPids(self.allocator, &self.pid_buf, &self.pid_capacity);
 
-        var stats = CollectionStats{ .total_pids = pids.len };
-
         var processes = std.ArrayList(ProcessInfo).init(self.allocator);
         try processes.ensureTotalCapacityPrecise(pids.len);
 
@@ -117,21 +107,17 @@ pub const ProcessCollector = struct {
             if (proc_info) |info| {
                 if (try self.shouldIncludeProcess(info)) {
                     try processes.append(info);
-                    stats.collected += 1;
                 } else {
                     var mut_info = info;
                     mut_info.deinit(self.allocator);
                 }
-            } else {
-                stats.skipped += 1;
             }
         }
-
-        // std.log.info("Process collection: {}/{} collected ({} full, {} degraded, {} skipped)", .{ stats.collected, stats.total_pids, stats.full_quality, stats.degraded_quality, stats.skipped });
 
         if (self.last_collection) |*old| {
             old.deinit();
         }
+        
         self.last_collection = new_collection;
 
         return processes.toOwnedSlice();
