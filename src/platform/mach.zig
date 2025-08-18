@@ -7,6 +7,16 @@ const c = @cImport({
     @cInclude("mach/thread_act.h");
 });
 
+// Minimal helpers over Mach APIs
+// Notes:
+// task_for_pid commonly fails with KERN_FAILURE/KERN_PROTECTION_FAILURE
+// for other PIDs without entitlements we surface that as AccessDenied
+//
+// The CPU "percent" calculation below is a coarse heuristic derived from cumulative
+// thread times (not wall-clock-normalized). The production collector uses the
+// proc_info path for rate calculations, this Mach path is kept for testing
+// and experimentation.
+ 
 pub const MachError = error{
     InvalidTask,
     InvalidThread,
@@ -26,6 +36,7 @@ pub fn getTaskCpuInfo(pid: i32) !CpuUsage {
 
     defer _ = c.mach_port_deallocate(c.mach_task_self(), task);
 
+    // Basic task info (resident/virtual not needed here, but this call verifies access)
     var task_info_data: c.mach_task_basic_info_data_t = undefined;
     var task_info_count: c.mach_msg_type_number_t = c.MACH_TASK_BASIC_INFO_COUNT;
 
@@ -78,6 +89,8 @@ pub fn getTaskCpuInfo(pid: i32) !CpuUsage {
     }
 
     const total_time = total_user + total_system;
+    // Heuristic "percentage" from cumulative microseconds; bounded to [0,100].
+    // This is not comparable to the exporter’s rate-based value.
     const cpu_percent = if (total_time > 0)
         @as(f64, @floatFromInt(total_time)) / 10_000.0
     else

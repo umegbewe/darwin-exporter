@@ -5,6 +5,11 @@ const c = @cImport({
     @cInclude("CoreFoundation/CoreFoundation.h");
 });
 
+// Thin wrapper around NetworkStatistics.framework to accumulate per-PID
+// network counters. We subscribe to all TCP/UDP sockets, compute deltas
+// per socket (keyed by UUID) and aggregate them per process
+// The aggregated values are intended to be exported as monotonic Prometheus
+// counters (since exporter start)
 const NStatManagerRef = *opaque {};
 const NStatSourceRef = *opaque {};
 
@@ -49,7 +54,8 @@ extern "c" fn NStatSourceQueryCounts(
     source: NStatSourceRef,
 ) void;
 
-// NetworkStatistics.framework keys
+// NOTE: Keys are CFString identifiers used in dictionary payloads from the
+// framework. Presence/format can vary across macOS versions but should be stable since 10.x
 extern "c" const kNStatSrcKeyPID: c.CFStringRef;
 extern "c" const kNStatSrcKeyProcessName: c.CFStringRef;
 extern "c" const kNStatSrcKeyRxBytes: c.CFStringRef;
@@ -67,6 +73,7 @@ pub const NetworkStatsError = error{
     InvalidPID,
 };
 
+// Public, per process view od accumulated network activity since init
 pub const ProcessNetworkStats = struct {
     pid: i32,
     rx_bytes: u64,
@@ -75,6 +82,9 @@ pub const ProcessNetworkStats = struct {
     tx_packets: u64,
 };
 
+// Internal per socket snapshot used to compute deltas. We store the latest
+// absolute counters from the framework and the last seen time to prune
+// sockets e.g closed connections that no longer emit updates
 const SocketStats = struct {
     pid: i32,
     rx_bytes: u64,
@@ -91,17 +101,20 @@ const DescriptionBlock = objc.Block(struct {}, .{c.CFDictionaryRef}, void);
 
 const CountsBlock = objc.Block(struct {}, .{c.CFDictionaryRef}, void);
 
+// Global manager guarded by g_stats_mutex, the framework expects a 
+// singleton-style lifecycle for the manager/callbacks
 var g_network_stats: ?*NetworkStatsManager = null;
 var g_stats_mutex = std.Thread.Mutex{};
 
 const NetworkStatsManager = struct {
     allocator: std.mem.Allocator,
-    // per process aggregated stats
+    // Per process aggregated stats
     stats_map: std.AutoHashMap(i32, ProcessNetworkStats),
-    //per socket stats for delta calculation key is UUID string
+    //Per socket stats for delta calculation key is UUID string
     socket_map: std.AutoHashMap(Uuid16, SocketStats),
     manager: NStatManagerRef,
-    // Blocks must be kept alive, stores contexts we copy
+    // Blocks must be kept alive, we retain copied contexts here and release
+    // them in denit to avoid dangling callbacks
     source_added_block: SourceAddedBlock.Context,
     description_blocks: std.ArrayList(*DescriptionBlock.Context),
     counts_blocks: std.ArrayList(*CountsBlock.Context),
@@ -122,13 +135,15 @@ const NetworkStatsManager = struct {
         self.stats_map.deinit();
 
         if (@intFromPtr(self.manager) != 0) {
+            // Manager is a CFType, release our retain
             c.CFRelease(@as(c.CFTypeRef, @ptrCast(self.manager)));
         }
         self.allocator.destroy(self);
     }
 };
 
-// Helper to get u64 from CFNumber
+// Helper to read a signed 64 bit CFNumber and clamp <0 to 0 (framework may
+// report negative values transiently)
 fn getCFNumberValue(dict: c.CFDictionaryRef, key: c.CFStringRef) u64 {
     const num = c.CFDictionaryGetValue(dict, key);
 
@@ -139,7 +154,8 @@ fn getCFNumberValue(dict: c.CFDictionaryRef, key: c.CFStringRef) u64 {
     return @intCast(@max(0, value));
 }
 
-// Helper to get string from CFString
+// Helper to copy a CFString value from the dictionary into buf as UTF-8
+// Returns a slice into buf or nulll if absent or too large
 fn getCFStringValue(buf: []u8, dict: c.CFDictionaryRef, key: c.CFStringRef) ?[]const u8 {
     const str = c.CFDictionaryGetValue(dict, key);
     if (str == null) return null;
@@ -150,6 +166,8 @@ fn getCFStringValue(buf: []u8, dict: c.CFDictionaryRef, key: c.CFStringRef) ?[]c
 }
 
 // Description callback, handles metadata updates
+// When a socket transitions to a terminal state, purge it from socket_map
+// to stop holding stale baselines for delta computation
 fn descriptionCallbackImpl(_: *const DescriptionBlock.Context, dict: c.CFDictionaryRef) callconv(.C) void {
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
@@ -169,6 +187,9 @@ fn descriptionCallbackImpl(_: *const DescriptionBlock.Context, dict: c.CFDiction
     }
 }
 
+// Counts callback converts absolute per-socket counters to per-interval deltas
+// and aggregates them into per-PID totals, counter regressions (PID/socket
+// restarts) are treated as zero delta
 fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) callconv(.C) void {
     _ = ctx;
 
@@ -216,6 +237,7 @@ fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) 
         return;
     };
 
+    // monotonic timestamp for stale socket pruning
     const now_ns: u64 = @intCast(std.time.nanoTimestamp());
 
     gop.value_ptr.* = SocketStats{ .pid = pid, .rx_bytes = curr_rx_bytes, .tx_bytes = curr_tx_bytes, .rx_packets = curr_rx_packets, .tx_packets = curr_tx_packets, .last_seen_ns = now_ns };
@@ -240,6 +262,9 @@ fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) 
     s.value_ptr.tx_packets += delta_tx_packets;
 }
 
+// Called by the framework when a new source is observed. We attach our 
+// descripition and counts blocks to the source and issue an immediate query
+// to seed initial state. Blocks are copied to the heap and retained
 fn sourceAddedCallbackImpl(_: *const SourceAddedBlock.Context, source: NStatSourceRef, context: ?*anyopaque) callconv(.C) void {
     // context is not reliably passed through the block, so we use global state
     _ = context;
@@ -287,6 +312,9 @@ fn sourceAddedCallbackImpl(_: *const SourceAddedBlock.Context, source: NStatSour
     _ = NStatSourceQueryCounts(source);
 }
 
+// Initializes the global NetworkStatistics manager once
+// Pre-sizes maps to reduce rehashing, registers blocks and subscribes
+// all TCP/UDP sources (filters set to 0 = no filtering)
 pub fn initNetworkStats(allocator: std.mem.Allocator) !void {
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
@@ -338,6 +366,7 @@ pub fn initNetworkStats(allocator: std.mem.Allocator) !void {
     g_network_stats = manager;
 }
 
+// Tears down the global manager and releases retained blocks/CF objecsts
 pub fn deinitNetworkStats() void {
     g_stats_mutex.lock();
 
@@ -349,6 +378,8 @@ pub fn deinitNetworkStats() void {
     }
 }
 
+// Returns the current accumulated stats for a PID. If no activity has been
+// observed for pid, returns a zeroed struct. Errors if the manager is unset
 pub fn getProcessNetworkStats(pid: i32) !ProcessNetworkStats {
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
@@ -369,6 +400,8 @@ pub fn getProcessNetworkStats(pid: i32) !ProcessNetworkStats {
     };
 }
 
+// Remove sockets that have not been seen for max_age_ns. This keeps the
+// per-socket baseline table bounded, per-process totals remain intact
 pub fn sweepStaleSocketStats(max_age_ns: u64) void {
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
@@ -392,6 +425,7 @@ pub fn sweepStaleSocketStats(max_age_ns: u64) void {
     }
 }
 
+// Returns a snapshot array of all per-PID aggragtes. Caller owns the slice
 pub fn getAllNetworkStats(allocator: std.mem.Allocator) ![]ProcessNetworkStats {
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
@@ -411,6 +445,7 @@ pub fn getAllNetworkStats(allocator: std.mem.Allocator) ![]ProcessNetworkStats {
 
 const Uuid16 = [16]u8;
 
+// Hex nibble helper for UUID parsing
 fn hexNibble(cu: u8) ?u8 {
     return switch (cu) {
         '0'...'9' => cu - '0',
@@ -420,6 +455,8 @@ fn hexNibble(cu: u8) ?u8 {
     };
 }
 
+// Parses a UUID with or without dashes into 16 raw bytes
+// Returns null if the string is malformed
 fn parseUuid16(s: []const u8) ?Uuid16 {
     var out: Uuid16 = undefined;
     var i: usize = 0;

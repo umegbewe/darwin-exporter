@@ -17,6 +17,10 @@ const ProcessInfo = config.ProcessInfo;
 const ProcessState = config.ProcessState;
 const Config = config.Config;
 
+// High-level collector for taking a point-in-time snapshot of 
+// process state and formatting it for metrics. The collector is deliberately
+// stateful to compute CPU usages from deltas between scrapes and
+// preserve caches that reduce per-scrape syscalls and allocations
 pub const ProcessCollector = struct {
     allocator: std.mem.Allocator,
     config: Config,
@@ -26,8 +30,10 @@ pub const ProcessCollector = struct {
     user_cache: ProcessUsernameCache,
     cmd_cache: ProcessCmdlineCache,
     string_pool: StringPool,
+    // Previous scrape snapshot used to compute CPU deltas, replaced automatically
+    // at the end of eac successful collect()
     last_collection: ?CollectionState = null,
-    // reusable pid buffer to avoid per-scrape allocations
+    // Reusable pid buffer to avoid per-scrape allocations
     pid_buf: []i32 = &.{},
     pid_capacity: usize = 0,
 
@@ -62,6 +68,7 @@ pub const ProcessCollector = struct {
         };
     }
 
+    // Frees caches and any reused buffers. Safe to call after partial failure
     pub fn deinit(self: *ProcessCollector) void {
         if (self.last_collection) |*collection| {
             collection.deinit();
@@ -74,6 +81,9 @@ pub const ProcessCollector = struct {
         darwin.net.deinitNetworkStats();
     }
 
+    // Takes a single snapshot of all processes visible to the caller
+    // Uses caches to minimize syscalls and reuses internal buffers
+    // Returns an owned slice, freed at freeProcessList
     pub fn collect(self: *ProcessCollector) ![]ProcessInfo {
         darwin.net.sweepStaleSocketStats(60 * std.time.ns_per_s);
 
@@ -125,6 +135,7 @@ pub const ProcessCollector = struct {
         return processes.toOwnedSlice();
     }
 
+    // Wrapper that treats common errors as "not present" rather than failing the scrape
     fn collectProcess(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState) !?ProcessInfo {
         return self.collectProcessProcInfo(pid, current_time, new_collection) catch |err| switch (err) {
             error.AccessDenied, error.InvalidPid => null,
@@ -132,10 +143,13 @@ pub const ProcessCollector = struct {
         };
     }
 
+    // Primary data path using libproc/proc_pidinfo with graceful fallback
+    // when some fields are unavailable. Populates new_collections so later
+    // scrapes can compute CPU usage deltas
     fn collectProcessProcInfo(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState) !?ProcessInfo {
         const basic_info = try darwin.proc_info.getBasicInfo(pid);
 
-        // skip kernel threads
+        // skip kernel threads, uninteresting for process-level accounting
         if (basic_info.pbi_flags & 0x4 != 0) {
             return null;
         }
@@ -226,6 +240,8 @@ pub const ProcessCollector = struct {
                 .start_time = @intCast(basic_info.pbi_start_tvsec),
             };
         } else {
+            // No info available (e.g permission), Record a zeroed
+            // snapshot so CPU deltas remain well-defined on next scrape
             try new_collection.processes.put(pid, .{ .cpu_user_us = 0, .cpu_sys_us = 0, .timestamp = current_time });
 
             return ProcessInfo{
@@ -264,6 +280,9 @@ pub const ProcessCollector = struct {
         }
     }
 
+    // Alternative Mach-based path kept for reference/experimentation
+    // Requires task_for_pid which oftens fails without priviledges. Not used
+    // by collect(), see collectProcessProcInfo for the production
     fn collectProcessMach(self: *ProcessCollector, pid: i32, current_time: i64, new_collection: *CollectionState) !?ProcessInfo {
         const basic_info = try darwin.proc_info.getBasicInfo(pid);
 
@@ -364,6 +383,9 @@ pub const ProcessCollector = struct {
         };
     }
 
+    // Computes CPU usage percentage across scrapes using per process user+sys
+    // microsecond counters and elapsed wall time. Normalized by core count
+    // Returns 0 when elasped <= 0 or counters regressed e.g PID reuse
     fn calculateCpuPercent(self: *ProcessCollector, pid: i32, user_us: u64, sys_us: u64, now: i64) f64 {
         const last_state = self.last_collection orelse return 0;
         const prev = last_state.processes.get(pid) orelse return 0;
@@ -394,6 +416,8 @@ pub const ProcessCollector = struct {
         };
     }
 
+    // Apply include/exclude name filters. Note: current matching is a simple
+    // substring test, not full regex
     fn shouldIncludeProcess(self: *ProcessCollector, proc: ProcessInfo) !bool {
         for (self.config.exclude_patterns) |pattern| {
             if (try self.matchesPattern(proc.name, pattern)) {
@@ -421,6 +445,9 @@ pub const ProcessCollector = struct {
         return std.mem.indexOf(u8, name, pattern) != null;
     }
 
+    // Frees all owned strings in a collected list and then the list itself
+    // Safe today because ProcessInfo.deinit is a no-op, if that changes
+    // the loop still delegates ownership to that method
     pub fn freeProcessList(self: *ProcessCollector, processes: []ProcessInfo) void {
         for (processes) |*proc| {
             proc.deinit(self.allocator);
@@ -429,6 +456,8 @@ pub const ProcessCollector = struct {
     }
 };
 
+// Looks up a username for a UID and caches the results
+// Returns an owned slice lifetime is managed by ProcessUsernameCache
 pub fn getUserName(self: *ProcessUsernameCache, uid: u32) ![]const u8 {
     if (self.get(uid)) |name| {
         return name;
@@ -458,21 +487,21 @@ const Upid = struct {
     start_usec: i64 
 };
 
-// names are interned in string_pool need to rethink this
+// Names are interned in string_pool need to rethink this
 const ProcessNameCache = cache.Cache(Upid, []const u8, null);
 
-// usernames are owned here, free on sweep/deinit
+// Usernames are owned here, free on sweep/deinit
 const ProcessUsernameCache = cache.Cache(u32, []const u8, freeOwnedSlice);
 
-// cmdlines are owned here, free on sweep/deinit
+// Cmdlines are owned here, free on sweep/deinit
 const ProcessCmdlineCache = cache.Cache(Upid, []const u8, freeOwnedSlice);
 
-// helper to free owned slices
+// Helper to free owned slices
 fn freeOwnedSlice(allocator: std.mem.Allocator, s: []const u8) void {
     allocator.free(s);
 }
 
-//deduplicates common strings (process names, cmdlines)
+//Deduplicates common strings (process names, cmdlines) to reduce memory churn
 const StringPool = struct {
     strings: std.StringHashMap([]const u8),
     allocator: std.mem.Allocator,
@@ -489,6 +518,8 @@ const StringPool = struct {
         self.strings.deinit();
     }
 
+    // Returns a stable, interned copy of str. If an identical slice
+    // exists, it is reused (pointer equality is valid across scrapes).
     pub fn intern(self: *StringPool, str: []const u8) ![]const u8 {
         if (self.strings.get(str)) |existing| {
             return existing;

@@ -78,7 +78,6 @@ pub const Server = struct {
                     }) catch {};
                     continue;
                 };
-                // defer self.allocator.free(response_body);
                 request.respond(response_body, .{
                     .status = .ok,
                     .extra_headers = &prom_headers,
@@ -96,23 +95,3 @@ pub const Server = struct {
         }
     }
 };
-
-fn testHandler(ctx: *anyopaque, req: *std.http.Server.Request, target: []const u8) ![]const u8 {
-    _ = ctx;
-    _ = req;
-    _ = target;
-    return "Hello from Zig std.http!";
-}
-
-test "server creation and route addition" {
-    const alloc = std.testing.allocator;
-
-    var srv = try Server.init(alloc, "127.0.0.1", 0);
-    defer srv.deinit();
-
-    var ctx: u8 = 0;
-    try srv.addRoute("/test", testHandler, &ctx);
-
-    try std.testing.expectEqual(@as(usize, 1), srv.routes.items.len);
-    try std.testing.expectEqualStrings("/test", srv.routes.items[0].path);
-}

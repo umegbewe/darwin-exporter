@@ -1,9 +1,13 @@
 const std = @import("std");
 
+// A tiny generation-based cache with mark-and-sweep semantics.
+// Call beginRound() before a scan, touch entries via get/put,
+// then sweep() to drop untouched entries.
 pub fn Cache(comptime Key: type, comptime Value: type, comptime deinitFn: ?fn (std.mem.Allocator, Value) void) type {
     return struct {
         const Self = @This();
-        const Entry = struct { value: Value, gen: u32 = 0 };
+        const Entry = struct { value: Value, gen: u32 = 0 }; // gen marks last-touch round
+
 
         cache: std.AutoHashMap(Key, Entry),
         allocator: std.mem.Allocator,
@@ -22,6 +26,7 @@ pub fn Cache(comptime Key: type, comptime Value: type, comptime deinitFn: ?fn (s
         }
 
         pub fn beginRound(self: *Self) void {
+            // Advances the "current" generation; touches will be updated.
             self.gen += 1;
         }
 
@@ -35,6 +40,7 @@ pub fn Cache(comptime Key: type, comptime Value: type, comptime deinitFn: ?fn (s
         }
 
         pub fn get(self: *Self, key: Key) ?Value {
+            // Touch on read so the entry survives the next sweep()
             if (self.cache.getPtr(key)) |entry| {
                 entry.gen = self.gen;
                 return entry.value;
@@ -43,6 +49,7 @@ pub fn Cache(comptime Key: type, comptime Value: type, comptime deinitFn: ?fn (s
         }
 
         pub fn put(self: *Self, key: Key, value: Value) !void {
+            // Inserts/updates at the current generation
             try self.cache.put(key, .{ 
                 .value = value, 
                 .gen = self.gen 

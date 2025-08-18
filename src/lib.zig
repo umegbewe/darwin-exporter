@@ -14,6 +14,8 @@ pub const ProcessCollector = process.ProcessCollector;
 pub const MetricsFormatter = metrics.MetricsFormatter;
 pub const Server = server.Server;
 
+// Top-level library wiring for the process-exporter, owns the
+// collector/formatter/server and exposes a single Exporter facade.
 pub const Error = error{
     SystemError,
     PermissionDenied,

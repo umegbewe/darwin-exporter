@@ -7,6 +7,8 @@ const c = @cImport({
     @cInclude("errno.h");
 });
 
+// Low-level sysctl/proc_listpids helpers
+// Prefer listAllPids for efficient PID enumeration (reusable buffer)
 pub const SysctlError = error{
     SystemResources,
     PermissionDenied,
@@ -15,6 +17,7 @@ pub const SysctlError = error{
 };
 
 pub fn getAllPids(allocator: std.mem.Allocator) ![]i32 {
+    // Legacy enumeration using KERN_PROC; allocates a fresh buffer each call
     var mib = [_]c_int{ c.CTL_KERN, c.KERN_PROC, c.KERN_PROC_ALL, 0 };
     var size: usize = 0;
 
@@ -124,9 +127,11 @@ pub fn getBootTime() !i64 {
         return errno_to_error();
     }
 
+    // Seconds since epoch (UTC) for the system boot
     return boot_time.tv_sec;
 }
 
+// Translate errno into a coarse error class for callers
 fn errno_to_error() SysctlError {
     return switch (c.__error()) {
         c.ENOMEM => SysctlError.SystemResources,

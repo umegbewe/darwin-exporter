@@ -7,6 +7,9 @@ const c = @cImport({
     @cInclude("mach/mach.h");
 });
 
+// Thin wrappers over libproc/sysctl for per-process inspection.
+// These calls are inherently racy, the target process may exit or change
+// between queries.
 pub const ProcError = error{ InvalidPid, BufferTooSmall, SystemError, AccessDenied };
 
 pub const MaxProcNameLen: usize = @intCast(c.PROC_PIDPATHINFO_MAXSIZE);
@@ -90,6 +93,12 @@ pub fn getFdCount(pid: i32) !u32 {
     return count;
 }
 
+// Reads KERN_PROCARGS2 and reconstructs a space-joined argv string.
+// The kernel buffer contains multiple NUL runs we (1) skip the exec path,
+// (2) skip NULs until argv[0], then (3) copy argc strings separated by spaces
+// 
+// This is an expensive call
+// Hopefully doesn't make an appearance in getargv hall of shame https://getargv.narzt.cam/hallofshame.html
 pub fn getProcessCmdline(allocator: std.mem.Allocator, pid: i32) ![]u8 {
     var mib = [_]c_int{ c.CTL_KERN, c.KERN_PROCARGS2, pid };
     var arg_size: usize = 0;
