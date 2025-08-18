@@ -1,22 +1,23 @@
 ## process-exporter
 
-Native macOS process exporter. Exposes per-process metrics in Prometheus text format over HTTP.
+macOS process exporter. Exposes per-process metrics in Prometheus text format over HTTP.
 
 ## Build
 ```
 zig build -Doptimize=ReleaseSafe
+
 ./zig-out/bin/process-exporter --help
 ```
 
 ## Run
 Default:
 
-```
+```sh
 # listening on 0.0.0.0:9256, metrics at /metrics
 ./process-exporter
 ```
 ## Examples
-```
+```sh
 # Custom port and include only postgres processes
 ./process-exporter --port 9257 --include-pattern postgres
 
@@ -45,13 +46,9 @@ Gauges (one sample per group unless noted):
 
 Counters (monotonic):
 * `cpu_seconds_total{mode="user"|"system"}` — accumulated CPU seconds split by mode.
-
 * Disk I/O: `diskio_bytes_read_total`, `diskio_bytes_write_total`
-
 * Scheduler/syscalls/messages: `context_switches_total`, `syscalls_mach_total`, `syscalls_unix_total`, `messages_sent_total`, `messages_received_total`
-
 * Network: `net_receive_bytes_total`, `net_transmit_bytes_total`, `net_receive_packets_total`, `net_transmit_packets_total`
-
 * Memory faults: `cow_faults_total`, `faults_total`, `pageins_total`
 
 
@@ -59,7 +56,6 @@ Additional helper gauge:
 * `process_num_procs` — number of processes in the group.
 
 Labels on all samples:
-
 * `groupname` — grouping key (see below)
 * `name` — representative process name (first member of the group)
 * `user` — representative username
@@ -91,7 +87,6 @@ If include_patterns is non-empty, only names containing at least one include pat
 Network totals are built from NetworkStatistics per-socket absolute counters:
 
 * The exporter subscribes to all TCP and UDP sources.
-
 * Deltas are computed per socket (keyed by UUID) and then summed per PID.
 * On macOS versions where counts are not available for a source, totals for that socket may remain zero until counts are reported.
 * Closed/TimeWait sockets are purged from the per-socket baseline to bound memory.
@@ -168,24 +163,15 @@ pub fn main() !void {
 ## Notes
 * Memory Allocation strategy
     * Reused PID buffer for enumeration.
-
     * Generation-swept caches for process names, usernames, cmdlines.
-
     * String interning pool to deduplicate common strings.
-
     * Formatter keeps a large [ArrayList(u8)](https://ziglang.org/documentation/master/std/#std.ArrayList) and calls clearRetainingCapacity() each scrape.
 
 * CPU%
-
     * Computed from deltas of microsecond counters between scrapes and normalized by CPU count.
-
     * If counters regress (PID reuse or restart), the sample is zero for that interval.
-
 * Thread metrics
     * Emitted as two samples (total, running) per group.
-
 * The exporter provides an unauthenticated HTTP endpoint. Prefer binding to `127.0.0.1` and use a reverse proxy for remote access.
-
 * Some per-process calls can fail due to permissions. The collector treats AccessDenied/InvalidPid as non-fatal and skips those processes.
-
 * Network statistics rely on a private framework availability/behavior may vary by macOS version but should be stable since 10.x versions atleast
