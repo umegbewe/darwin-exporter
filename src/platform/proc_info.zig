@@ -93,7 +93,6 @@ pub fn getFdCount(pid: i32) !u32 {
 pub fn getProcessCmdline(allocator: std.mem.Allocator, pid: i32) ![]u8 {
     var mib = [_]c_int{ c.CTL_KERN, c.KERN_PROCARGS2, pid };
     var arg_size: usize = 0;
-
     if (c.sysctl(&mib, mib.len, null, &arg_size, null, 0) != 0 or arg_size < 4) {
         return ProcError.SystemError;
     }
@@ -106,39 +105,48 @@ pub fn getProcessCmdline(allocator: std.mem.Allocator, pid: i32) ![]u8 {
     }
 
     const argc = std.mem.bytesAsValue(u32, buffer[0..4]).*;
-    if (argc == 0) {
-        return try allocator.dupe(u8, "");
-    }
-
-    var idx: usize = 4;
-    while (idx < arg_size and buffer[idx] != 0) : (idx += 1) {}
+    if (argc == 0) return allocator.dupe(u8, "");
 
     // Some genius thought it was a good idea to dump random NULL's
     // skip ALL nulls between exec path and argv[0]
     // there can be multiple nulls here
+    var idx: usize = 4;
+    while (idx < arg_size and buffer[idx] != 0) : (idx += 1) {}
     while (idx < arg_size and buffer[idx] == 0) : (idx += 1) {}
 
-    var cmdline = std.ArrayList(u8).init(allocator);
-    defer cmdline.deinit();
-
-    var arg_count: u32 = 0;
-    while (idx < arg_size and arg_count < argc) {
-        if (idx >= arg_size) break;
-
-        const start = idx;
-        while (idx < arg_size and buffer[idx] != 0) : (idx += 1) {}
-
-        if (arg_count > 0) {
-            try cmdline.append(' ');
+    var scan = idx;
+    var count: u32 = 0;
+    var total: usize = 0;
+    while (scan < arg_size and count < argc) {
+        const start = scan;
+        while (scan < arg_size and buffer[scan] != 0) : (scan += 1) {}
+        if (scan > start) {
+            total += scan - start;
+            count += 1;
         }
-
-        try cmdline.appendSlice(buffer[start..idx]);
-        arg_count += 1;
-
-        while (idx < arg_size and buffer[idx] == 0) : (idx += 1) {}
+        while (scan < arg_size and buffer[scan] == 0) : (scan += 1) {}
     }
+    if (count > 1) total += (count - 1);
 
-    return cmdline.toOwnedSlice();
+    var result = try allocator.alloc(u8, total);
+    var write_idx: usize = 0;
+
+    scan = idx;
+    count = 0;
+
+    while (scan < arg_size and count < argc) {
+        const start = scan;
+        while (scan < arg_size and buffer[scan] != 0) : (scan += 1) {}
+        if (scan > start) {
+            if (count > 0) { result[write_idx] = ' '; write_idx += 1; }
+            const len = scan - start;
+            @memcpy(result[write_idx .. write_idx + len], buffer[start .. scan]);
+            write_idx += len;
+            count += 1;
+        }
+        while (scan < arg_size and buffer[scan] == 0) : (scan += 1) {}
+    }
+    return result;
 }
 
 pub fn getThreadCount(pid: i32) !u32 {
