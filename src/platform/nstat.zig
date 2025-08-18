@@ -81,6 +81,7 @@ const SocketStats = struct {
     tx_bytes: u64,
     rx_packets: u64,
     tx_packets: u64,
+    last_seen_ns: u64 
 };
 
 // Block signatures for NetworkStatistics callbacks
@@ -98,7 +99,7 @@ const NetworkStatsManager = struct {
     // per process aggregated stats
     stats_map: std.AutoHashMap(i32, ProcessNetworkStats),
     //per socket stats for delta calculation key is UUID string
-    socket_map: std.StringHashMap(SocketStats),
+    socket_map: std.AutoHashMap(Uuid16, SocketStats),
     manager: NStatManagerRef,
     // Blocks must be kept alive, stores contexts we copy
     source_added_block: SourceAddedBlock.Context,
@@ -116,14 +117,13 @@ const NetworkStatsManager = struct {
         }
         self.counts_blocks.deinit();
 
-        // Clean up socket map keys we own the strings
-        var iter = self.socket_map.iterator();
-        while (iter.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-        }
         self.socket_map.deinit();
 
         self.stats_map.deinit();
+
+        if (@intFromPtr(self.manager) != 0) {
+            c.CFRelease(@as(c.CFTypeRef, @ptrCast(self.manager)));
+        }
         self.allocator.destroy(self);
     }
 };
@@ -140,18 +140,13 @@ fn getCFNumberValue(dict: c.CFDictionaryRef, key: c.CFStringRef) u64 {
 }
 
 // Helper to get string from CFString
-fn getCFStringValue(allocator: std.mem.Allocator, dict: c.CFDictionaryRef, key: c.CFStringRef) ![]u8 {
+fn getCFStringValue(buf: []u8, dict: c.CFDictionaryRef, key: c.CFStringRef) ?[]const u8 {
     const str = c.CFDictionaryGetValue(dict, key);
-    if (str == null) return allocator.dupe(u8, "<unknown>");
+    if (str == null) return null;
 
-    var buffer: [256]u8 = undefined;
-
-    const success = c.CFStringGetCString(@ptrCast(str), &buffer, buffer.len, c.kCFStringEncodingUTF8);
-
-    if (success == 0) return allocator.dupe(u8, "<unknown>");
-
-    const len = std.mem.indexOfScalar(u8, &buffer, 0) orelse buffer.len;
-    return allocator.dupe(u8, buffer[0..len]);
+    if (c.CFStringGetCString(@ptrCast(str), buf.ptr, @intCast(buf.len), c.kCFStringEncodingUTF8) == 0) return null;
+    const n = std.mem.indexOfScalar(u8, buf, 0) orelse buf.len;
+    return buf[0..n];
 }
 
 // Description callback, handles metadata updates
@@ -162,15 +157,14 @@ fn descriptionCallbackImpl(_: *const DescriptionBlock.Context, dict: c.CFDiction
     const manager = g_network_stats orelse return;
 
     // If TCPState present and Closed/TimeWait remove from socket_map
-    const state = getCFStringValue(manager.allocator, dict, kNStatSrcKeyTCPState) catch return;
-    defer manager.allocator.free(state);
+    var state_buf: [32]u8 = undefined;
 
-    if (std.mem.eql(u8, state, "Closed") or std.mem.eql(u8, state, "TimeWait")) {
-        const uuid = getCFStringValue(manager.allocator, dict, kNStatSrcKeyUUID) catch return;
-        defer manager.allocator.free(uuid);
-
-        if (manager.socket_map.fetchRemove(uuid)) |kv| {
-            manager.allocator.free(kv.key);
+    if (getCFStringValue(&state_buf, dict, kNStatSrcKeyTCPState)) |state| {
+        if (std.mem.eql(u8, state, "Closed") or std.mem.eql(u8, state, "TimeWait")) {
+            var uuid_buf: [64]u8 = undefined;
+            const uuid = getCFStringValue(&uuid_buf, dict, kNStatSrcKeyUUID) orelse return;
+            const key = parseUuid16(uuid) orelse return;
+            _ = manager.socket_map.remove(key);
         }
     }
 }
@@ -183,8 +177,9 @@ fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) 
 
     const manager = g_network_stats orelse return;
 
-    const uuid = getCFStringValue(manager.allocator, dict, kNStatSrcKeyUUID) catch return;
-    defer manager.allocator.free(uuid);
+    var uuid_buf: [64]u8 = undefined;
+    const uuid = getCFStringValue(&uuid_buf, dict, kNStatSrcKeyUUID) orelse return;
+    const uuid_key = parseUuid16(uuid) orelse return;
 
     const pid_raw = getCFNumberValue(dict, kNStatSrcKeyPID);
     if (pid_raw == 0) return;
@@ -200,7 +195,7 @@ fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) 
     var delta_rx_packets: u64 = curr_rx_packets;
     var delta_tx_packets: u64 = curr_tx_packets;
 
-    if (manager.socket_map.get(uuid)) |prev| {
+    if (manager.socket_map.get(uuid_key)) |prev| {
         // calulate delta and handle potential counter resets
         if (curr_rx_bytes >= prev.rx_bytes) {
             delta_rx_bytes = curr_rx_bytes - prev.rx_bytes;
@@ -216,44 +211,33 @@ fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) 
         }
     }
 
-    const gop = manager.socket_map.getOrPut(uuid) catch |err| {
+    const gop = manager.socket_map.getOrPut(uuid_key) catch |err| {
         std.log.debug("Failed to get or put socket stats: {s}", .{@errorName(err)});
         return;
     };
 
-    if (!gop.found_existing) {
-        gop.key_ptr.* = manager.allocator.dupe(u8, uuid) catch |err| {
-            _ = manager.socket_map.remove(uuid);
-            std.log.debug("Failed to allocate socket key: {s}", .{@errorName(err)});
-            return;
+    const now_ns: u64 = @intCast(std.time.nanoTimestamp());
+
+    gop.value_ptr.* = SocketStats{ .pid = pid, .rx_bytes = curr_rx_bytes, .tx_bytes = curr_tx_bytes, .rx_packets = curr_rx_packets, .tx_packets = curr_tx_packets, .last_seen_ns = now_ns };
+
+    const s = manager.stats_map.getOrPut(pid) catch |err| {
+        std.log.debug("Failed to update process stats for PID {}: {s}", .{ pid, @errorName(err) });
+        return;
+    };
+
+    if (!s.found_existing) {
+        s.value_ptr.* = ProcessNetworkStats{
+            .pid = pid,
+            .rx_bytes = 0,
+            .tx_bytes = 0,
+            .rx_packets = 0,
+            .tx_packets = 0,
         };
     }
-
-    gop.value_ptr.* = SocketStats{
-        .pid = pid,
-        .rx_bytes = curr_rx_bytes,
-        .tx_bytes = curr_tx_bytes,
-        .rx_packets = curr_rx_packets,
-        .tx_packets = curr_tx_packets,
-    };
-
-    const existing = manager.stats_map.get(pid) orelse ProcessNetworkStats{
-        .pid = pid,
-        .rx_bytes = 0,
-        .tx_bytes = 0,
-        .rx_packets = 0,
-        .tx_packets = 0,
-    };
-
-    manager.stats_map.put(pid, ProcessNetworkStats{
-        .pid = pid,
-        .rx_bytes = existing.rx_bytes + delta_rx_bytes,
-        .tx_bytes = existing.tx_bytes + delta_tx_bytes,
-        .rx_packets = existing.rx_packets + delta_rx_packets,
-        .tx_packets = existing.tx_packets + delta_tx_packets,
-    }) catch |err| {
-        std.log.debug("Failed to update process stats for PID {}: {s}", .{ pid, @errorName(err) });
-    };
+    s.value_ptr.rx_bytes += delta_rx_bytes;
+    s.value_ptr.tx_bytes += delta_tx_bytes;
+    s.value_ptr.rx_packets += delta_rx_packets;
+    s.value_ptr.tx_packets += delta_tx_packets;
 }
 
 fn sourceAddedCallbackImpl(_: *const SourceAddedBlock.Context, source: NStatSourceRef, context: ?*anyopaque) callconv(.C) void {
@@ -315,7 +299,7 @@ pub fn initNetworkStats(allocator: std.mem.Allocator) !void {
     manager.* = NetworkStatsManager{
         .allocator = allocator,
         .stats_map = std.AutoHashMap(i32, ProcessNetworkStats).init(allocator),
-        .socket_map = std.StringHashMap(SocketStats).init(allocator),
+        .socket_map = std.AutoHashMap(Uuid16, SocketStats).init(allocator),
         .manager = undefined,
         .source_added_block = undefined,
         .description_blocks = std.ArrayList(*DescriptionBlock.Context).init(allocator),
@@ -326,6 +310,12 @@ pub fn initNetworkStats(allocator: std.mem.Allocator) !void {
     errdefer manager.socket_map.deinit();
     errdefer manager.description_blocks.deinit();
     errdefer manager.counts_blocks.deinit();
+
+    // Presized to reduce rehash churn
+    try manager.stats_map.ensureTotalCapacity(512);
+    try manager.socket_map.ensureTotalCapacity(4096);
+    try manager.description_blocks.ensureTotalCapacity(512);
+    try manager.counts_blocks.ensureTotalCapacity(4096);
 
     manager.source_added_block = SourceAddedBlock.init(.{}, &sourceAddedCallbackImpl);
 
@@ -379,29 +369,26 @@ pub fn getProcessNetworkStats(pid: i32) !ProcessNetworkStats {
     };
 }
 
-pub fn resetProcessNetworkStats(pid: i32) void {
+pub fn sweepStaleSocketStats(max_age_ns: u64) void {
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
 
     const manager = g_network_stats orelse return;
+    const now_ns: u64 = @intCast(std.time.nanoTimestamp());
 
-    _ = manager.stats_map.remove(pid);
-
-    // because i like the word, synonym is "remove"
-    var obliterate = std.ArrayList([]const u8).init(manager.allocator);
-    defer obliterate.deinit();
+    var to_remove = std.ArrayList(Uuid16).init(manager.allocator);
+    defer to_remove.deinit();
+    to_remove.ensureTotalCapacity(manager.socket_map.count()) catch {};
 
     var iter = manager.socket_map.iterator();
     while (iter.next()) |entry| {
-        if (entry.value_ptr.pid == pid) {
-            obliterate.append(entry.key_ptr.*) catch continue;
+        if (now_ns - entry.value_ptr.last_seen_ns > max_age_ns) {
+            to_remove.append(entry.key_ptr.*) catch {};
         }
     }
 
-    for (obliterate.items) |key| {
-        if (manager.socket_map.fetchRemove(key)) |kv| {
-            manager.allocator.free(kv.key);
-        }
+    for (to_remove.items) |key| {
+        _ = manager.socket_map.remove(key);
     }
 }
 
@@ -420,4 +407,38 @@ pub fn getAllNetworkStats(allocator: std.mem.Allocator) ![]ProcessNetworkStats {
     }
 
     return stats_list.toOwnedSlice();
+}
+
+const Uuid16 = [16]u8;
+
+fn hexNibble(cu: u8) ?u8 {
+    return switch (cu) {
+        '0'...'9' => cu - '0',
+        'a'...'f' => cu - 'a' + 10,
+        'A'...'F' => cu - 'A' + 10,
+        else => null,
+    };
+}
+
+fn parseUuid16(s: []const u8) ?Uuid16 {
+    var out: Uuid16 = undefined;
+    var i: usize = 0;
+    var j: usize = 0;
+
+    while (i < s.len and j < 16) {
+        if (s[i] == '-') {
+            i += 1;
+            continue;
+        }
+
+        if (i + 1 >= s.len) return null;
+        const hi = hexNibble(s[i]) orelse return null;
+        const lo = hexNibble(s[i + 1]) orelse return null;
+        out[j] = (hi << 4) | lo;
+        j += 1;
+        i += 2;
+    }
+    if (j != 16) return null;
+    while (i < s.len) : (i += 1) if (s[i] != '-') return null;
+    return out;
 }
