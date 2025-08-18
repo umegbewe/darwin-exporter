@@ -75,6 +75,8 @@ pub const ProcessCollector = struct {
     }
 
     pub fn collect(self: *ProcessCollector) ![]ProcessInfo {
+        darwin.net.sweepStaleSocketStats(60 * std.time.ns_per_s);
+
         self.cmd_cache.beginRound();
         defer self.cmd_cache.sweep();
 
@@ -98,7 +100,7 @@ pub const ProcessCollector = struct {
             .time = current_time,
             .processes = std.AutoHashMap(i32, ProcessSnapshot).init(self.allocator),
         };
-
+        try new_collection.processes.ensureTotalCapacity(@intCast(pids.len));
         errdefer new_collection.deinit();
 
         for (pids) |pid| {
