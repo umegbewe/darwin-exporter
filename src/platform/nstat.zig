@@ -101,7 +101,7 @@ const DescriptionBlock = objc.Block(struct {}, .{c.CFDictionaryRef}, void);
 
 const CountsBlock = objc.Block(struct {}, .{c.CFDictionaryRef}, void);
 
-// Global manager guarded by g_stats_mutex, the framework expects a 
+// Global manager guarded by g_stats_mutex, the framework expects a
 // singleton-style lifecycle for the manager/callbacks
 var g_network_stats: ?*NetworkStatsManager = null;
 var g_stats_mutex = std.Thread.Mutex{};
@@ -113,22 +113,10 @@ const NetworkStatsManager = struct {
     //Per socket stats for delta calculation key is UUID string
     socket_map: std.AutoHashMap(Uuid16, SocketStats),
     manager: NStatManagerRef,
-    // Blocks must be kept alive, we retain copied contexts here and release
-    // them in denit to avoid dangling callbacks
     source_added_block: SourceAddedBlock.Context,
-    description_blocks: std.ArrayList(*DescriptionBlock.Context),
-    counts_blocks: std.ArrayList(*CountsBlock.Context),
 
     pub fn deinit(self: *NetworkStatsManager) void {
-        for (self.description_blocks.items) |block| {
-            DescriptionBlock.release(block);
-        }
-        self.description_blocks.deinit();
 
-        for (self.counts_blocks.items) |block| {
-            CountsBlock.release(block);
-        }
-        self.counts_blocks.deinit();
 
         self.socket_map.deinit();
 
@@ -272,37 +260,23 @@ fn sourceAddedCallbackImpl(_: *const SourceAddedBlock.Context, source: NStatSour
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
 
-    const manager = g_network_stats orelse return;
 
     const desc_block_context = DescriptionBlock.init(.{}, &descriptionCallbackImpl);
-
-    // Copy the block to heap, it needs to persist
     const desc_block = DescriptionBlock.copy(&desc_block_context) catch |err| {
         std.log.err("Failed to copy description block: {s}", .{@errorName(err)});
         return;
     };
 
-    // Track the block so we can clean it up later
-    manager.description_blocks.append(desc_block) catch |err| {
-        std.log.err("Failed to track description block: {s}", .{@errorName(err)});
-        DescriptionBlock.release(desc_block);
-        return;
-    };
-
     _ = NStatSourceSetDescriptionBlock(source, @ptrCast(desc_block));
+    DescriptionBlock.release(desc_block);
 
     const count_block_context = CountsBlock.init(.{}, &countsCallbackImpl);
     const counts_block = CountsBlock.copy(&count_block_context) catch |err| {
         std.log.err("Failed to copy counts block: {s}", .{@errorName(err)});
         return;
     };
-    manager.counts_blocks.append(counts_block) catch |err| {
-        std.log.err("Failed to track counts block: {s}", .{@errorName(err)});
-        CountsBlock.release(counts_block);
-        return;
-    };
-
     _ = NStatSourceSetCountsBlock(source, @ptrCast(counts_block));
+    CountsBlock.release(counts_block);
 
     // Query initial description to get first snapshot
     _ = NStatSourceQueryDescription(source);
@@ -330,20 +304,14 @@ pub fn initNetworkStats(allocator: std.mem.Allocator) !void {
         .socket_map = std.AutoHashMap(Uuid16, SocketStats).init(allocator),
         .manager = undefined,
         .source_added_block = undefined,
-        .description_blocks = std.ArrayList(*DescriptionBlock.Context).init(allocator),
-        .counts_blocks = std.ArrayList(*CountsBlock.Context).init(allocator),
     };
 
     errdefer manager.stats_map.deinit();
     errdefer manager.socket_map.deinit();
-    errdefer manager.description_blocks.deinit();
-    errdefer manager.counts_blocks.deinit();
 
     // Presized to reduce rehash churn
     try manager.stats_map.ensureTotalCapacity(512);
     try manager.socket_map.ensureTotalCapacity(4096);
-    try manager.description_blocks.ensureTotalCapacity(512);
-    try manager.counts_blocks.ensureTotalCapacity(4096);
 
     manager.source_added_block = SourceAddedBlock.init(.{}, &sourceAddedCallbackImpl);
 
