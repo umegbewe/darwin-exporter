@@ -86,6 +86,7 @@ pub const MetricsFormatter = struct {
 
         try self.writeProcessCounts(writer, groups, processes);
         try self.writeThreadMetrics(writer, groups, processes);
+        try self.writeProcessInfo(writer, processes);
 
         return self.buffer.items;
     }
@@ -123,7 +124,6 @@ pub const MetricsFormatter = struct {
 
         return groups;
     }
-
 
     fn getGroupKey(self: *MetricsFormatter, proc: ProcessInfo, grouping: config.ProcessGrouping) !struct { key: []const u8, needs_dup: bool } {
         if (grouping.custom_grouper) |grouper| {
@@ -319,6 +319,23 @@ pub const MetricsFormatter = struct {
             try writer.print(
                 "process_threads{{groupname=\"{s}\",name=\"{s}\",user=\"{s}\",state=\"running\"}} {d}\n",
                 .{ group_name, repr_proc.name, repr_proc.username, running_threads },
+            );
+        }
+        try writer.writeByte('\n');
+    }
+
+    fn writeProcessInfo(self: *MetricsFormatter, writer: anytype, processes: []const ProcessInfo) !void {
+        _ = self;
+
+        try writer.writeAll("# HELP process_info Process metadata (pid, ppid, uid, gid, user, state)\n");
+        try writer.writeAll("# TYPE process_info gauge\n");
+
+        for (processes) |p| {
+            const state = p.state.toString();
+
+            try writer.print(
+                "process_info{{pid=\"{d}\",ppid=\"{d}\",uid=\"{d}\",gid=\"{d}\",name=\"{s}\",user=\"{s}\",state=\"{s}\",priority=\"{d}\",start_time=\"{d}\"}} 1\n",
+                .{ p.pid, p.ppid, p.uid, p.gid, p.name, p.username, state, p.priority, p.start_time },
             );
         }
         try writer.writeByte('\n');

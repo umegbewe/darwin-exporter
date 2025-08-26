@@ -17,7 +17,7 @@ const ProcessInfo = config.ProcessInfo;
 const ProcessState = config.ProcessState;
 const Config = config.Config;
 
-// High-level collector for taking a point-in-time snapshot of 
+// High-level collector for taking a point-in-time snapshot of
 // process state and formatting it for metrics. The collector is deliberately
 // stateful to compute CPU usages from deltas between scrapes and
 // preserve caches that reduce per-scrape syscalls and allocations
@@ -209,10 +209,12 @@ pub const ProcessCollector = struct {
             return ProcessInfo{
                 .pid = pid,
                 .ppid = basic_info.pbi_ppid,
+                .uid = @intCast(basic_info.pbi_uid),
+                .gid = @intCast(basic_info.pbi_gid),
                 .name = name,
                 .cmdline = cmdline,
                 .username = username,
-                .state = self.getProcessState(basic_info.pbi_status),
+                .state = self.getProcessState(basic_info.pbi_status, task_info.pti_threadnum, task_info.pti_numrunning),
                 .cpu_usage_percent = cpu_percent,
                 .cpu_time_user = task_info.pti_total_user,
                 .cpu_time_system = task_info.pti_total_system,
@@ -247,10 +249,12 @@ pub const ProcessCollector = struct {
             return ProcessInfo{
                 .pid = pid,
                 .ppid = basic_info.pbi_ppid,
+                .uid = @intCast(basic_info.pbi_uid),
+                .gid = @intCast(basic_info.pbi_gid),
                 .name = name,
                 .cmdline = cmdline,
                 .username = username,
-                .state = self.getProcessState(basic_info.pbi_status),
+                .state = switch (basic_info.pbi_status) {5 => .zombie, 4 => .stopped, 1 => .idle, 3 => .sleeping, 2 => .running, else => .unknown},
                 .cpu_usage_percent = 0,
                 .cpu_time_user = 0,
                 .cpu_time_system = 0,
@@ -404,16 +408,21 @@ pub const ProcessCollector = struct {
         return (@as(f64, @floatFromInt(diff_us)) / 1_000_000.0) / sec * 100.0 / cores;
     }
 
-    fn getProcessState(self: *ProcessCollector, status: u32) ProcessState {
+    fn getProcessState(self: *ProcessCollector, status: u32, threads_total: i32, threads_running: i32) ProcessState {
         _ = self;
-        return switch ((status)) {
-            1 => .idle, //SIDL
-            2 => .running, //SRUN
-            3 => .sleeping, //SSLEEP
-            4 => .stopped, //SSTOP
-            5 => .zombie, //SZOMB
-            else => .unknown,
-        };
+        switch (status) {
+            1 => return .idle, //SIDL
+            5 => return .zombie, //SZOMB
+            4 => return .stopped,
+            
+            // SRUN/SSLEEP (2/3) is derived from thread info
+            else => {},
+        }
+
+        if (threads_running > 0) return .running;
+        if (threads_total == 0) return .unknown; // shouldn't happen but well
+
+        return .sleeping;
     }
 
     // Apply include/exclude name filters. Note: current matching is a simple
@@ -481,11 +490,7 @@ pub fn getUserName(self: *ProcessUsernameCache, uid: u32) ![]const u8 {
     return name;
 }
 
-const Upid = struct { 
-    pid: i32, 
-    start_sec: i64, 
-    start_usec: i64 
-};
+const Upid = struct { pid: i32, start_sec: i64, start_usec: i64 };
 
 // Names are interned in string_pool need to rethink this
 const ProcessNameCache = cache.Cache(Upid, []const u8, null);

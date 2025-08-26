@@ -52,6 +52,8 @@ pub const ProcessGrouping = struct {
 pub const ProcessInfo = struct {
     pid: i32,
     ppid: u32,
+    uid: u32,
+    gid: u32,
     name: []const u8,
     cmdline: []const u8,
     username: []const u8,
@@ -78,7 +80,7 @@ pub const ProcessInfo = struct {
 
     messages_sent: i32,
     messages_received: i32,
-    
+
     net_rx_bytes: u64,
     net_tx_bytes: u64,
     net_rx_packets: u64,

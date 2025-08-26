@@ -252,7 +252,7 @@ fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) 
 
 // Called by the framework when a new source is observed. We attach our 
 // descripition and counts blocks to the source and issue an immediate query
-// to seed initial state. Blocks are copied to the heap and retained
+// to seed initial state. 
 fn sourceAddedCallbackImpl(_: *const SourceAddedBlock.Context, source: NStatSourceRef, context: ?*anyopaque) callconv(.C) void {
     // context is not reliably passed through the block, so we use global state
     _ = context;
