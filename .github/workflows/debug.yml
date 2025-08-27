@@ -1,0 +1,21 @@
+name: Debug macOS via SSH
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  ssh-debug:
+    runs-on: macos-13
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show macOS & Xcode
+        run: |
+          sw_vers
+          xcodebuild -version || true
+
+      - name: Start tmate session
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+          sudo: true
