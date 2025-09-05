@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": "-- Grafana --",
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -13,30 +16,260 @@
     ]
   },
   "editable": true,
-  "gnetId": null,
+  "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": null,
+  "id": 1,
   "links": [],
   "panels": [
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "gradient",
+                  "type": "gauge"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 50
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory (MB)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decmbytes"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "gradient",
+                  "type": "gauge"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Threads"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "FDs"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 13,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "CPU %"
+          }
+        ]
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "expr": "process_cpu_usage_percent{job=\"$job\", instance=\"$instance\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "expr": "process_phys_footprint_bytes{job=\"$job\", instance=\"$instance\"} / 1024 / 1024",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (name, pid) (process_threads{job=\"$job\", instance=\"$instance\", state=\"total\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max by (name, pid) (process_threads{job=\"$job\", instance=\"$instance\", state=\"running\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "avg by (name, pid) (process_open_fds{job=\"$job\", instance=\"$instance\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "E"
+        }
+      ],
+      "title": "Process Overview",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "app": true,
+              "groupname": true,
+              "instance": true,
+              "job": true
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": {
+              "Value #A": "CPU %",
+              "Value #B": "Memory (MB)",
+              "Value #C": "Total Threads",
+              "Value #D": "Running Threads",
+              "Value #E": "FDs",
+              "groupname": "",
+              "name": "Process",
+              "pid": "PID",
+              "state": ""
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -59,7 +292,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "red",
@@ -75,24 +308,33 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 10
       },
       "id": 1,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(10, process_cpu_usage_percent{job=\"$job\", instance=\"$instance\"})",
-          "legendFormat": "{{name}} ({{pid}})",
+          "legendFormat": "{{name}}",
           "refId": "A"
         }
       ],
@@ -100,7 +342,9 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -112,7 +356,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "yellow",
@@ -132,23 +376,31 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 10
       },
       "id": 2,
       "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
         "orientation": "auto",
         "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
         "showThresholdLabels": false,
         "showThresholdMarkers": true,
+        "sizing": "auto",
         "text": {}
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "sum(process_cpu_usage_percent{job=\"$job\", instance=\"$instance\"})",
           "refId": "A"
         }
@@ -157,24 +409,31 @@
       "type": "gauge"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -197,7 +456,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -209,24 +468,33 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 18
       },
       "id": 3,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(10, rate(process_cpu_seconds_total{job=\"$job\", instance=\"$instance\"}[5m]) * 100)",
-          "legendFormat": "{{name}} ({{pid}})",
+          "legendFormat": "{{name}}",
           "refId": "A"
         }
       ],
@@ -234,24 +502,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -274,7 +549,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -286,24 +561,33 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 18
       },
       "id": 4,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(10, process_phys_footprint_bytes{job=\"$job\", instance=\"$instance\"})",
-          "legendFormat": "{{name}} ({{pid}})",
+          "legendFormat": "{{name}}",
           "refId": "A"
         }
       ],
@@ -311,24 +595,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -351,7 +642,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -394,29 +685,45 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 26
       },
       "id": 5,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
-          "expr": "sum(process_memory_rss{job=\"$job\", instance=\"$instance\"})",
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(process_memory_rss_bytes{job=\"$job\", instance=\"$instance\"})",
           "legendFormat": "RSS",
+          "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum(process_memory_vms{job=\"$job\", instance=\"$instance\"})",
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(process_memory_vms_bytes{job=\"$job\", instance=\"$instance\"})",
           "legendFormat": "VMS",
+          "range": true,
           "refId": "B"
         }
       ],
@@ -424,24 +731,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -464,7 +778,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -476,29 +790,41 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 26
       },
       "id": 6,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(5, rate(process_diskio_bytes_read_total{job=\"$job\", instance=\"$instance\"}[5m]))",
-          "legendFormat": "Read: {{name}} ({{pid}})",
+          "legendFormat": "Read: {{name}}",
           "refId": "A"
         },
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(5, rate(process_diskio_bytes_write_total{job=\"$job\", instance=\"$instance\"}[5m]))",
-          "legendFormat": "Write: {{name}} ({{pid}})",
+          "legendFormat": "Write: {{name}}",
           "refId": "B"
         }
       ],
@@ -506,24 +832,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -546,7 +879,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -558,29 +891,41 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 34
       },
       "id": 7,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(5, rate(process_net_receive_bytes_total{job=\"$job\", instance=\"$instance\"}[5m]))",
-          "legendFormat": "RX: {{name}} ({{pid}})",
+          "legendFormat": "RX: {{name}}",
           "refId": "A"
         },
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(5, rate(process_net_transmit_bytes_total{job=\"$job\", instance=\"$instance\"}[5m]))",
-          "legendFormat": "TX: {{name}} ({{pid}})",
+          "legendFormat": "TX: {{name}}",
           "refId": "B"
         }
       ],
@@ -588,24 +933,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -628,7 +980,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -640,24 +992,35 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 34
       },
       "id": 8,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
-          "expr": "topk(10, process_num_fds{job=\"$job\", instance=\"$instance\"})",
-          "legendFormat": "{{name}} ({{pid}})",
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "topk(10, process_open_fds{job=\"$job\", instance=\"$instance\"})",
+          "legendFormat": "{{name}}",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -665,24 +1028,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -705,7 +1075,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -717,24 +1087,35 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 32
+        "y": 42
       },
       "id": 9,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
-          "expr": "topk(10, process_num_threads{job=\"$job\", instance=\"$instance\"})",
-          "legendFormat": "{{name}} ({{pid}})",
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "topk(10, process_threads{job=\"$job\", instance=\"$instance\"})",
+          "legendFormat": "{{name}}",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -742,24 +1123,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -782,7 +1170,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -794,24 +1182,33 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 32
+        "y": 42
       },
       "id": 10,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "topk(5, rate(process_context_switches_total{job=\"$job\", instance=\"$instance\"}[5m]))",
-          "legendFormat": "{{name}} ({{pid}})",
+          "legendFormat": "{{name}}",
           "refId": "A"
         }
       ],
@@ -819,24 +1216,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -859,7 +1263,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -871,27 +1275,39 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 50
       },
       "id": 11,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "sum(rate(process_syscalls_mach_total{job=\"$job\", instance=\"$instance\"}[5m]))",
           "legendFormat": "Mach Syscalls",
           "refId": "A"
         },
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "sum(rate(process_syscalls_unix_total{job=\"$job\", instance=\"$instance\"}[5m]))",
           "legendFormat": "Unix Syscalls",
           "refId": "B"
@@ -901,24 +1317,31 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
+              "legend": false,
               "tooltip": false,
-              "viz": false,
-              "legend": false
+              "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -941,7 +1364,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -953,32 +1376,47 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 40
+        "y": 50
       },
       "id": 12,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
         }
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "sum(rate(process_cow_faults_total{job=\"$job\", instance=\"$instance\"}[5m]))",
           "legendFormat": "COW Faults",
           "refId": "A"
         },
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "sum(rate(process_faults_total{job=\"$job\", instance=\"$instance\"}[5m]))",
           "legendFormat": "Total Faults",
           "refId": "B"
         },
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "sum(rate(process_pageins_total{job=\"$job\", instance=\"$instance\"}[5m]))",
           "legendFormat": "Page-ins",
           "refId": "C"
@@ -988,178 +1426,9 @@
       "type": "timeseries"
     },
     {
-      "datasource": "${datasource}",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "CPU %"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "custom.displayMode",
-                "value": "gradient-gauge"
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": null
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 50
-                    },
-                    {
-                      "color": "red",
-                      "value": 80
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Memory (MB)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "decmbytes"
-              },
-              {
-                "id": "custom.displayMode",
-                "value": "gradient-gauge"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Threads"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "FDs"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              }
-            ]
-          }
-        ]
+      "datasource": {
+        "uid": "${datasource}"
       },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 48
-      },
-      "id": 13,
-      "options": {
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "CPU %"
-          }
-        ]
-      },
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "process_cpu_usage_percent{job=\"$job\", instance=\"$instance\"}",
-          "format": "table",
-          "instant": true,
-          "refId": "A"
-        },
-        {
-          "expr": "process_phys_footprint_bytes{job=\"$job\", instance=\"$instance\"} / 1024 / 1024",
-          "format": "table",
-          "instant": true,
-          "refId": "B"
-        },
-        {
-          "expr": "process_num_threads{job=\"$job\", instance=\"$instance\"}",
-          "format": "table",
-          "instant": true,
-          "refId": "C"
-        },
-        {
-          "expr": "process_num_fds{job=\"$job\", instance=\"$instance\"}",
-          "format": "table",
-          "instant": true,
-          "refId": "D"
-        }
-      ],
-      "title": "Process Overview Table",
-      "transformations": [
-        {
-          "id": "merge",
-          "options": {}
-        },
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "job": true,
-              "instance": true
-            },
-            "renameByName": {
-              "name": "Process",
-              "pid": "PID",
-              "Value #A": "CPU %",
-              "Value #B": "Memory (MB)",
-              "Value #C": "Threads",
-              "Value #D": "FDs"
-            }
-          }
-        }
-      ],
-      "type": "table"
-    },
-    {
-      "datasource": "${datasource}",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1171,7 +1440,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -1191,17 +1460,25 @@
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
+        "showPercentChange": false,
         "text": {},
-        "textMode": "auto"
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "count(count by (name, pid) (process_cpu_usage_percent{job=\"$job\", instance=\"$instance\"}))",
           "refId": "A"
         }
@@ -1210,7 +1487,9 @@
       "type": "stat"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1222,7 +1501,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -1242,18 +1521,28 @@
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
+        "showPercentChange": false,
         "text": {},
-        "textMode": "auto"
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
-          "expr": "sum(process_num_threads{job=\"$job\", instance=\"$instance\"})",
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(process_threads{job=\"$job\", instance=\"$instance\"})",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -1261,7 +1550,9 @@
       "type": "stat"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1273,7 +1564,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -1293,17 +1584,25 @@
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
+        "showPercentChange": false,
         "text": {},
-        "textMode": "auto"
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
+          "datasource": {
+            "uid": "${datasource}"
+          },
           "expr": "sum(process_phys_footprint_bytes{job=\"$job\", instance=\"$instance\"})",
           "refId": "A"
         }
@@ -1312,7 +1611,9 @@
       "type": "stat"
     },
     {
-      "datasource": "${datasource}",
+      "datasource": {
+        "uid": "${datasource}"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1324,7 +1625,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               }
             ]
           },
@@ -1344,18 +1645,28 @@
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
+        "showPercentChange": false,
         "text": {},
-        "textMode": "auto"
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "pluginVersion": "8.0.0",
+      "pluginVersion": "12.1.1",
       "targets": [
         {
-          "expr": "sum(process_num_fds{job=\"$job\", instance=\"$instance\"})",
+          "datasource": {
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(process_open_fds{job=\"$job\", instance=\"$instance\"})",
+          "range": true,
           "refId": "A"
         }
       ],
@@ -1363,39 +1674,36 @@
       "type": "stat"
     }
   ],
+  "preload": false,
   "refresh": "10s",
-  "schemaVersion": 27,
-  "style": "dark",
-  "tags": ["macos", "process", "system"],
+  "schemaVersion": 41,
+  "tags": [
+    "macos",
+    "process",
+    "system"
+  ],
   "templating": {
     "list": [
       {
         "current": {
-          "selected": false,
-          "text": "Prometheus",
-          "value": "Prometheus"
+          "text": "prometheus",
+          "value": "dew5rm98dfdoge"
         },
-        "hide": 0,
         "includeAll": false,
         "label": "Datasource",
-        "multi": false,
         "name": "datasource",
         "options": [],
         "query": "prometheus",
         "refresh": 1,
         "regex": "",
-        "skipUrlSync": false,
         "type": "datasource"
       },
       {
         "current": {
-          "selected": false,
-          "text": "",
-          "value": ""
+          "text": "darwin-exporter",
+          "value": "darwin-exporter"
         },
-        "hide": 0,
         "label": "Job",
-        "multi": false,
         "name": "job",
         "options": [],
         "query": {
@@ -1404,19 +1712,14 @@
         },
         "refresh": 1,
         "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
         "type": "query"
       },
       {
         "current": {
-          "selected": false,
-          "text": "",
-          "value": ""
+          "text": "host.docker.internal:1053",
+          "value": "host.docker.internal:1053"
         },
-        "hide": 0,
         "label": "Instance",
-        "multi": false,
         "name": "instance",
         "options": [],
         "query": {
@@ -1425,8 +1728,6 @@
         },
         "refresh": 1,
         "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
         "type": "query"
       }
     ]
@@ -1439,5 +1740,5 @@
   "timezone": "",
   "title": "macOS Process Metrics",
   "uid": "macos-process-metrics",
-  "version": 1
+  "version": 9
 }

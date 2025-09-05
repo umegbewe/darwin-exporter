@@ -129,7 +129,7 @@ pub const ProcessCollector = struct {
         if (self.last_collection) |*old| {
             old.deinit();
         }
-        
+
         self.last_collection = new_collection;
 
         return processes.toOwnedSlice();
@@ -254,7 +254,14 @@ pub const ProcessCollector = struct {
                 .name = name,
                 .cmdline = cmdline,
                 .username = username,
-                .state = switch (basic_info.pbi_status) {5 => .zombie, 4 => .stopped, 1 => .idle, 3 => .sleeping, 2 => .running, else => .unknown},
+                .state = switch (basic_info.pbi_status) {
+                    5 => .zombie,
+                    4 => .stopped,
+                    1 => .idle,
+                    3 => .sleeping,
+                    2 => .running,
+                    else => .unknown,
+                },
                 .cpu_usage_percent = 0,
                 .cpu_time_user = 0,
                 .cpu_time_system = 0,
@@ -414,7 +421,7 @@ pub const ProcessCollector = struct {
             1 => return .idle, //SIDL
             5 => return .zombie, //SZOMB
             4 => return .stopped,
-            
+
             // SRUN/SSLEEP (2/3) is derived from thread info
             else => {},
         }

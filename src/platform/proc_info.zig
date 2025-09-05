@@ -96,7 +96,7 @@ pub fn getFdCount(pid: i32) !u32 {
 // Reads KERN_PROCARGS2 and reconstructs a space-joined argv string.
 // The kernel buffer contains multiple NUL runs we (1) skip the exec path,
 // (2) skip NULs until argv[0], then (3) copy argc strings separated by spaces
-// 
+//
 // This is an expensive call
 // Hopefully doesn't make an appearance in getargv hall of shame https://getargv.narzt.cam/hallofshame.html
 pub fn getProcessCmdline(allocator: std.mem.Allocator, pid: i32) ![]u8 {
@@ -147,9 +147,12 @@ pub fn getProcessCmdline(allocator: std.mem.Allocator, pid: i32) ![]u8 {
         const start = scan;
         while (scan < arg_size and buffer[scan] != 0) : (scan += 1) {}
         if (scan > start) {
-            if (count > 0) { result[write_idx] = ' '; write_idx += 1; }
+            if (count > 0) {
+                result[write_idx] = ' ';
+                write_idx += 1;
+            }
             const len = scan - start;
-            @memcpy(result[write_idx .. write_idx + len], buffer[start .. scan]);
+            @memcpy(result[write_idx .. write_idx + len], buffer[start..scan]);
             write_idx += len;
             count += 1;
         }
@@ -186,11 +189,11 @@ pub fn getThreadCount(pid: i32) !u32 {
 }
 
 test "get process name" {
-    const allocator = std.testing.allocator;
     const pid = std.c.getpid();
 
-    const name = try getProcessName(allocator, pid);
-    defer allocator.free(name);
+    var buf: [MaxProcNameLen]u8 = undefined;
+
+    const name = try getProcessName(pid, &buf);
 
     // Should get some name
     try std.testing.expect(name.len > 0);

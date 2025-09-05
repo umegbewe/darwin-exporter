@@ -16,7 +16,7 @@ const c = @cImport({
 // thread times (not wall-clock-normalized). The production collector uses the
 // proc_info path for rate calculations, this Mach path is kept for testing
 // and experimentation.
- 
+
 pub const MachError = error{
     InvalidTask,
     InvalidThread,
@@ -103,7 +103,7 @@ pub fn getTaskCpuInfo(pid: i32) !CpuUsage {
     };
 }
 
-pub const MemoryInfo = struct { resident_size: u64, virtual_size: u64};
+pub const MemoryInfo = struct { resident_size: u64, virtual_size: u64 };
 
 pub fn getTaskMemoryInfo(pid: i32) !MemoryInfo {
     var task: c.mach_port_t = undefined;
@@ -129,19 +129,6 @@ pub fn getTaskMemoryInfo(pid: i32) !MemoryInfo {
         return MachError.KernelError;
     }
 
-    // var events: c.task_events_info_data_t = undefined;
-    // var events_count: c.mach_msg_type_number_t = c.TASK_EVENTS_INFO_COUNT;
-
-    // const ev_result = c.task_info(
-    //     task,
-    //     c.TASK_EVENTS_INFO,
-    //     @ptrCast(&events),
-    //     &events_count,
-    // );
-
-    // const page_ins = if (ev_result == c.KERN_SUCCESS)
-    //     @as(u64, @intCast(events.pageins))
-    // else 0;
 
     return MemoryInfo{
         .resident_size = task_info_data.resident_size,
@@ -153,7 +140,7 @@ pub fn getTaskMemoryInfo(pid: i32) !MemoryInfo {
 /// this function eturns a monotonically increasing tick value whose
 /// units are hardware/OS dependent. `mach_timebase_info()` supplies a rational
 /// conversion factor:
-/// 
+///
 ///     real_nanoseconds = mach_time * numer / denom
 ///
 /// where `numer`/`denom` describe how many nanoseconds each tick represents.

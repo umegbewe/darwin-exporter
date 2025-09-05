@@ -1,12 +1,12 @@
 const std = @import("std");
 const posix = std.posix;
 const process_exporter = @import("lib.zig");
-
 const Config = process_exporter.Config;
-
+const build_options = @import("build_options");
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
+
     const allocator = gpa.allocator();
 
     const args = try std.process.argsAlloc(allocator);
@@ -98,12 +98,12 @@ pub fn main() !void {
 fn printUsage() !void {
     const stdout = std.io.getStdOut().writer();
     try stdout.print(
-        \\Usage: process-exporter [OPTIONS]
+        \\Usage: darwin-exporter [OPTIONS]
         \\
-        \\Native macOS process exporter for Prometheus
+        \\ macOS/darwin process exporter for Prometheus
         \\
         \\OPTIONS:
-        \\  -p, --port PORT              Port to listen on (default: 9256)
+        \\  -p, --port PORT              Port to listen on (default: 1053)
         \\  -b, --bind ADDRESS           Address to bind to (default: 0.0.0.0)
         \\      --path PATH              Metrics endpoint path (default: /metrics)
         \\  -i, --interval SECONDS       Collection interval (default: 15)
@@ -116,20 +116,20 @@ fn printUsage() !void {
         \\
         \\EXAMPLES:
         \\  # Run with default settings
-        \\  process-exporter
+        \\  darwin-exporter
         \\
         \\  # Custom port and include only nginx processes
-        \\  process-exporter --port 9257 --include-pattern nginx
+        \\  darwin-exporter --port 9257 --include-pattern nginx
         \\
         \\  # Exclude kernel processes and use custom interval
-        \\  process-exporter --exclude-pattern "^kernel" --interval 30
+        \\  darwin-exporter --exclude-pattern "^kernel" --interval 30
         \\
     , .{});
 }
 
 fn printVersion() !void {
     const stdout = std.io.getStdOut().writer();
-    try stdout.print("process-exporter version 0.1.0\n", .{});
+    try stdout.print("darwin-exporter version {s}\n", .{build_options.version});
 }
 
 fn setupSignalHandlers() !void {
@@ -139,7 +139,7 @@ fn setupSignalHandlers() !void {
         .flags = 0,
     };
 
-    posix.sigaction(posix.SIG.INT,  &sa, null);
+    posix.sigaction(posix.SIG.INT, &sa, null);
     posix.sigaction(posix.SIG.TERM, &sa, null);
 }
 

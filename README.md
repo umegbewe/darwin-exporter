@@ -1,34 +1,40 @@
-## process-exporter
+## darwin-exporter
 
-macOS process exporter. Exposes per-process metrics in Prometheus text format over HTTP.
+macOS process exporter for Prometheus. Collects detailed per-process metrics including CPU, memory, disk I/O, network, and system call etc
 
-## Build
-```
+## Installation
+
+### Pre-built binaries
+Download from [releases](https://github.com/umegbewe/darwin-exporter/releases) page.
+
+### Build from source
+
+```bash
+git clone https://github.com/umegbewe/darwin-exporter
+cd darwin-exporter
 zig build -Doptimize=ReleaseSafe
-
-./zig-out/bin/process-exporter --help
+./zig-out/bin/darwin-exporter
 ```
 
-## Run
-Default:
+### Run
 
 ```sh
-# listening on 0.0.0.0:9256, metrics at /metrics
-./process-exporter
+# listening on 0.0.0.0:1053, metrics at /metrics
+./darwin-exporter
 ```
 ## Examples
 ```sh
 # Custom port and include only postgres processes
-./process-exporter --port 9257 --include-pattern postgres
+./darwin-exporter --port 9257 --include-pattern postgres
 
 # Exclude kernel-style names and use a longer interval
-./process-exporter --exclude-pattern "^kernel" --interval 30
+./darwin-exporter --exclude-pattern "^kernel" --interval 30
 
-# Bind to loopback only
-./process-exporter --bind 127.0.0.1
+# Bind to loopback
+./darwin-exporter --bind 127.0.0.1
 
 # Print help
-./process-exporter --help
+./darwin-exporter --help
 ```
 ## Metrics
 
@@ -94,12 +100,34 @@ Network totals are built from NetworkStatistics per-socket absolute counters:
 
 ## Library
 
+Add to your `build.zig.zon`:
+```zig
+.dependencies = .{
+    .process_exporter = .{
+        .url = "https://github.com/youruser/darwin-exporter/archive/v1.0.0.tar.gz",
+        .hash = "...",
+    },
+},
+```
+
+In your `build.zig`:
+```zig
+
+const process_exporter = b.dependency("process_exporter", .{});
+exe.root_module.addImport("process_exporter", process_exporter.module("process_exporter"));
+
+// You must also link these:
+exe.linkLibC();
+exe.linkFramework("CoreFoundation");
+exe.linkFramework("IOKit");
+exe.linkFramework("NetworkStatistics");
+```
 ### Init and run your own server
 
 ```Zig
 const std = @import("std");
-const exporter_lib = @import("lib.zig");
-const Config = exporter_lib.Config;
+const exporter = @import("lib.zig");
+const Config = exporter.Config;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -107,21 +135,21 @@ pub fn main() !void {
     const alloc = gpa.allocator();
 
     // macOS guard
-    try exporter_lib.init();
+    try exporter.init();
 
     // Configure
     var cfg = Config{
-        .port = 0, // not used when you host your own endpoint
+        .port = 0,
         .metrics_path = "/metrics",
         .grouping = .{ .by_name = true, .by_user = false, .by_cmdline = false },
-        .include_patterns = &.{}, // substring matches
+        .include_patterns = &.{},
         .exclude_patterns = &.{},
         .collect_fd = true,
         .include_threads = true,
         .collection_interval = 15,
     };
 
-    const exp = try exporter_lib.createExporter(alloc, cfg);
+    const exp = try exportercreateExporter(alloc, cfg);
     defer exp.deinit();
 
     // Example: integrate with your HTTP stack
@@ -137,15 +165,15 @@ pub fn main() !void {
 
 If you just want to serve `/metrics` with the provided server:
 ```zig
-const exporter_lib = @import("lib.zig");
-const Config = exporter_lib.Config;
+const exporter = @import("lib.zig");
+const Config = exporter.Config;
 
 pub fn main() !void {
-    try exporter_lib.init();
+    try exporter.init();
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    const exp = try exporter_lib.createExporter(gpa.allocator(), .{});
+    const exp = try exporter.createExporter(gpa.allocator(), .{});
     defer exp.deinit();
 
     // Blocks; handles /metrics and scrapes at the configured interval.
@@ -153,25 +181,24 @@ pub fn main() !void {
 }
 ```
 
-### Contract notes
+### Library notes
 * `collectOnce()` returns a slice that aliases an internal buffer; do not keep it past the next collect (copy if you must retain).
-
 * `Exporter.deinit()` must be called to release resources.
-
 * `init()` returns UnsupportedPlatform on non-macOS targets.
 
 ## Notes
-* Memory Allocation strategy
+* **Memory Allocation strategy**
     * Reused PID buffer for enumeration.
     * Generation-swept caches for process names, usernames, cmdlines.
     * String interning pool to deduplicate common strings.
     * Formatter keeps a large [ArrayList(u8)](https://ziglang.org/documentation/master/std/#std.ArrayList) and calls clearRetainingCapacity() each scrape.
-
-* CPU%
+* **CPU%**
     * Computed from deltas of microsecond counters between scrapes and normalized by CPU count.
     * If counters regress (PID reuse or restart), the sample is zero for that interval.
-* Thread metrics
+* **Thread metric**
     * Emitted as two samples (total, running) per group.
 * The exporter provides an unauthenticated HTTP endpoint. Prefer binding to `127.0.0.1` and use a reverse proxy for remote access.
 * Some per-process calls can fail due to permissions. The collector treats AccessDenied/InvalidPid as non-fatal and skips those processes.
-* Network statistics rely on a private framework availability/behavior may vary by macOS version but should be stable since 10.x versions atleast
+
+## License
+MIT License - See [LICENSE](https://github.com/umegbewe/darwin-exporter/blob/main/LICENSE) file for details.

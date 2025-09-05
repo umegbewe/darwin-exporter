@@ -4,65 +4,62 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
-        .name = "process-exporter",
+    const sdk_path = std.zig.system.darwin.getSdk(b.allocator, target.result) orelse
+        @panic("Failed to find macOS SDK");
+    defer b.allocator.free(sdk_path);
+
+    const macos_private_framework = b.fmt("{s}/System/Library/PrivateFrameworks", .{sdk_path});
+
+    const objc_dep = b.dependency("objc", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const build_opts = b.addOptions();
+    build_opts.addOption([]const u8, "version", "1.0.0");
+
+    const process_exporter = b.addModule("process_exporter", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
-    lib.linkLibC();
-    lib.linkFramework("CoreFoundation");
-    lib.linkFramework("IOKit");
-    b.installArtifact(lib);
+    process_exporter.addImport("objc", objc_dep.module("objc"));
 
     const exe = b.addExecutable(.{
-        .name = "process-exporter",
+        .name = "darwin-exporter",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = optimize != .Debug,
     });
+    exe.root_module.addOptions("build_options", build_opts);
+    exe.root_module.addImport("lib", process_exporter);
+    exe.root_module.addImport("objc", objc_dep.module("objc"));
     exe.linkLibC();
+    exe.addFrameworkPath(.{ .cwd_relative = macos_private_framework });
     exe.linkFramework("CoreFoundation");
     exe.linkFramework("IOKit");
+    exe.linkFramework("NetworkStatistics");
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
-    const run_step = b.step("run", "Run process exporter");
+    if (b.args) |args| run_cmd.addArgs(args);
+    const run_step = b.step("run", "Run darwin-exporter");
     run_step.dependOn(&run_cmd.step);
 
-    const lib_unit_tests = b.addTest(.{
+    const tests = b.addTest(.{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
-    lib_unit_tests.linkLibC();
-    lib_unit_tests.linkFramework("CoreFoundation");
-    lib_unit_tests.linkFramework("IOKit");
+    tests.root_module.addImport("objc", objc_dep.module("objc"));
+    tests.linkLibC();
+    tests.addFrameworkPath(.{ .cwd_relative = macos_private_framework });
+    tests.linkFramework("CoreFoundation");
+    tests.linkFramework("IOKit");
+    tests.linkFramework("NetworkStatistics");
 
-    const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
+    const test_run = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_lib_unit_tests.step);
-
-    const lib_docs = b.addStaticLibrary(.{
-        .name = "process-exporter-docs",
-        .root_source_file = b.path("src/lib.zig"),
-        .target = target,
-        .optimize = .Debug,
-    });
-    lib_docs.linkLibC();
-    lib_docs.linkFramework("CoreFoundation");
-    lib_docs.linkFramework("IOKit");
-
-    const install_docs = b.addInstallDirectory(.{
-        .source_dir = lib_docs.getEmittedDocs(),
-        .install_dir = .prefix,
-        .install_subdir = "docs",
-    });
-
-    const docs_step = b.step("docs", "Generate documentation");
-    docs_step.dependOn(&install_docs.step);
+    test_step.dependOn(&test_run.step);
 }

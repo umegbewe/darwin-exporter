@@ -14,7 +14,7 @@ pub const ProcessCollector = process.ProcessCollector;
 pub const MetricsFormatter = metrics.MetricsFormatter;
 pub const Server = server.Server;
 
-// Top-level library wiring for the process-exporter, owns the
+// Top-level library wiring for the exporter, owns the
 // collector/formatter/server and exposes a single Exporter facade.
 pub const Error = error{
     SystemError,
@@ -134,5 +134,5 @@ test "exporter creation" {
     const exporter = try createExporter(allocator, cfg);
     defer exporter.deinit();
 
-    try std.testing.expect(exporter.config.port == 9256);
+    try std.testing.expect(exporter.config.port == 1053);
 }

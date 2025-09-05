@@ -14,7 +14,7 @@ pub const Config = struct {
     collection_interval: u64 = 15,
 
     /// HTTP server port
-    port: u16 = 9256,
+    port: u16 = 1053,
 
     /// HTTP server bind address
     bind_address: []const u8 = "0.0.0.0",

@@ -1,12 +1,17 @@
 .{
     .name = .process_exporter,
-    .version = "0.1.0",
+    .version = "1.0.0",
 
     .fingerprint = 0xf0507b4f7bae87cc,
 
     .minimum_zig_version = "0.12.0",
 
-    .dependencies = .{},
+    .dependencies = .{
+        .objc = .{
+            .url = "https://github.com/mitchellh/zig-objc/archive/refs/heads/main.tar.gz",
+            .hash = "12206e0f811976e3ad4382d8429362cd885804cb2a0bad08b94f4b9c75250d848d91",
+        },
+    },
 
     .paths = .{
         "build.zig",

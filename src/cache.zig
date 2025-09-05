@@ -8,7 +8,6 @@ pub fn Cache(comptime Key: type, comptime Value: type, comptime deinitFn: ?fn (s
         const Self = @This();
         const Entry = struct { value: Value, gen: u32 = 0 }; // gen marks last-touch round
 
-
         cache: std.AutoHashMap(Key, Entry),
         allocator: std.mem.Allocator,
         gen: u32 = 0,
@@ -31,11 +30,25 @@ pub fn Cache(comptime Key: type, comptime Value: type, comptime deinitFn: ?fn (s
         }
 
         pub fn sweep(self: *Self) void {
-            var iter = self.cache.iterator();
-            while (iter.next()) |entry| {
-                if (entry.value_ptr.gen != self.gen) {
-                    _ = self.cache.remove(entry.key_ptr.*);
+            var to_remove = std.ArrayList(Key).init(self.allocator);
+            defer to_remove.deinit();
+
+            var it = self.cache.iterator();
+
+            while (it.next()) |e| {
+                if (e.value_ptr.gen != self.gen) {
+                    to_remove.append(e.key_ptr.*) catch {};
                 }
+            }
+
+            if (deinitFn) |f| {
+                for (to_remove.items) |k| {
+                    if (self.cache.fetchRemove(k)) |kv| {
+                        f(self.allocator, kv.value.value);
+                    }
+                }
+            } else {
+                for (to_remove.items) |k| _ = self.cache.remove(k);
             }
         }
 
@@ -50,10 +63,7 @@ pub fn Cache(comptime Key: type, comptime Value: type, comptime deinitFn: ?fn (s
 
         pub fn put(self: *Self, key: Key, value: Value) !void {
             // Inserts/updates at the current generation
-            try self.cache.put(key, .{ 
-                .value = value, 
-                .gen = self.gen 
-            });
+            try self.cache.put(key, .{ .value = value, .gen = self.gen });
         }
     };
 }

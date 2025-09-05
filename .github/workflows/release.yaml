@@ -1,0 +1,59 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-macos
+          - os: macos-13
+            target: x86_64-macos
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0
+
+      - name: Build
+        run: |
+          zig build -Doptimize=ReleaseFast
+          tar czf darwin-exporter-${{ matrix.target }}.tar.gz -C zig-out/bin .
+          sha256sum darwin-exporter-${{ matrix.target }}.tar.gz > darwin-exporter-${{ matrix.target }}.tar.gz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ matrix.target }}
+          path: darwin-exporter-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: "write-all"
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-artifacts-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

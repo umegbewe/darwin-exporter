@@ -91,7 +91,7 @@ const SocketStats = struct {
     tx_bytes: u64,
     rx_packets: u64,
     tx_packets: u64,
-    last_seen_ns: u64 
+    last_seen_ns: u64,
 };
 
 // Block signatures for NetworkStatistics callbacks
@@ -116,8 +116,6 @@ const NetworkStatsManager = struct {
     source_added_block: SourceAddedBlock.Context,
 
     pub fn deinit(self: *NetworkStatsManager) void {
-
-
         self.socket_map.deinit();
 
         self.stats_map.deinit();
@@ -250,16 +248,15 @@ fn countsCallbackImpl(ctx: *const CountsBlock.Context, dict: c.CFDictionaryRef) 
     s.value_ptr.tx_packets += delta_tx_packets;
 }
 
-// Called by the framework when a new source is observed. We attach our 
+// Called by the framework when a new source is observed. We attach our
 // descripition and counts blocks to the source and issue an immediate query
-// to seed initial state. 
+// to seed initial state.
 fn sourceAddedCallbackImpl(_: *const SourceAddedBlock.Context, source: NStatSourceRef, context: ?*anyopaque) callconv(.C) void {
     // context is not reliably passed through the block, so we use global state
     _ = context;
 
     g_stats_mutex.lock();
     defer g_stats_mutex.unlock();
-
 
     const desc_block_context = DescriptionBlock.init(.{}, &descriptionCallbackImpl);
     const desc_block = DescriptionBlock.copy(&desc_block_context) catch |err| {
