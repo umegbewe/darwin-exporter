@@ -172,7 +172,16 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    const exp = try exporter.createExporter(gpa.allocator(), .{});
+    const exp = try exporter.createExporter(gpa.allocator(), .{
+        .port = 0,
+        .metrics_path = "/metrics",
+        .grouping = .{ .by_name = true, .by_user = false, .by_cmdline = false },
+        .include_patterns = &.{},
+        .exclude_patterns = &.{},
+        .collect_fd = true,
+        .include_threads = true,
+        .collection_interval = 15,
+    });
     defer exp.deinit();
 
     // Blocks; handles /metrics and scrapes at the configured interval.
