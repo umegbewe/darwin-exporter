@@ -104,8 +104,7 @@ Add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
     .process_exporter = .{
-        .url = "https://github.com/youruser/darwin-exporter/archive/v1.0.0.tar.gz",
-        .hash = "...",
+        .url = "https://github.com/umegbewe/darwin-exporter/archive/v1.0.0.tar.gz",
     },
 },
 ```

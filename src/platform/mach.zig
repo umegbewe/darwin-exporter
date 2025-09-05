@@ -129,7 +129,6 @@ pub fn getTaskMemoryInfo(pid: i32) !MemoryInfo {
         return MachError.KernelError;
     }
 
-
     return MemoryInfo{
         .resident_size = task_info_data.resident_size,
         .virtual_size = task_info_data.virtual_size,

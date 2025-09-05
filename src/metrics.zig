@@ -398,4 +398,3 @@ pub const MetricsFormatter = struct {
         }
     };
 };
-

@@ -32,7 +32,7 @@ jobs:
         run: |
           zig build -Doptimize=ReleaseFast
           tar czf darwin-exporter-${{ matrix.target }}.tar.gz -C zig-out/bin .
-          sha256sum darwin-exporter-${{ matrix.target }}.tar.gz > darwin-exporter-${{ matrix.target }}.tar.gz.sha256
+          shasum -a 256 darwin-exporter-${{ matrix.target }}.tar.gz > darwin-exporter-${{ matrix.target }}.tar.gz.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
