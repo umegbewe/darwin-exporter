@@ -1,7 +1,7 @@
 const std = @import("std");
 const posix = std.posix;
-const process_exporter = @import("lib.zig");
-const Config = process_exporter.Config;
+const darwin_exporter = @import("lib.zig");
+const Config = darwin_exporter.Config;
 const build_options = @import("build_options");
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -83,11 +83,11 @@ pub fn main() !void {
         }
     }
 
-    try process_exporter.init();
+    try darwin_exporter.init();
 
     std.log.info("Metrics available at http://{s}:{d}{s}", .{ config.bind_address, config.port, config.metrics_path });
 
-    const exporter = try process_exporter.createExporter(allocator, config);
+    const exporter = try darwin_exporter.createExporter(allocator, config);
     defer exporter.deinit();
 
     try setupSignalHandlers();

@@ -1,8 +1,8 @@
 .{
-    .name = .process_exporter,
+    .name = .darwin_exporter,
     .version = "1.0.0",
 
-    .fingerprint = 0xf0507b4f7bae87cc,
+    .fingerprint = 0xaee604f2059dbac0,
 
     .minimum_zig_version = "0.12.0",
 

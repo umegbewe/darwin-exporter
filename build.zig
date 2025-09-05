@@ -18,12 +18,12 @@ pub fn build(b: *std.Build) void {
     const build_opts = b.addOptions();
     build_opts.addOption([]const u8, "version", "1.0.0");
 
-    const process_exporter = b.addModule("process_exporter", .{
+    const darwin_exporter = b.addModule("darwin_exporter", .{
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
-    process_exporter.addImport("objc", objc_dep.module("objc"));
+    darwin_exporter.addImport("objc", objc_dep.module("objc"));
 
     const exe = b.addExecutable(.{
         .name = "darwin-exporter",
@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
         .strip = optimize != .Debug,
     });
     exe.root_module.addOptions("build_options", build_opts);
-    exe.root_module.addImport("lib", process_exporter);
+    exe.root_module.addImport("lib", darwin_exporter);
     exe.root_module.addImport("objc", objc_dep.module("objc"));
     exe.linkLibC();
     exe.addFrameworkPath(.{ .cwd_relative = macos_private_framework });

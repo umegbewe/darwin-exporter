@@ -103,7 +103,7 @@ Network totals are built from NetworkStatistics per-socket absolute counters:
 Add to your `build.zig.zon`:
 ```zig
 .dependencies = .{
-    .process_exporter = .{
+    .darwin_exporter = .{
         .url = "https://github.com/umegbewe/darwin-exporter/archive/v1.0.0.tar.gz",
     },
 },
@@ -112,8 +112,8 @@ Add to your `build.zig.zon`:
 In your `build.zig`:
 ```zig
 
-const process_exporter = b.dependency("process_exporter", .{});
-exe.root_module.addImport("process_exporter", process_exporter.module("process_exporter"));
+const darwin_exporter = b.dependency("darwin_exporter", .{});
+exe.root_module.addImport("darwin_exporter", darwin_exporter.module("darwin_exporter"));
 
 // You must also link these:
 exe.linkLibC();
@@ -199,5 +199,12 @@ pub fn main() !void {
 * The exporter provides an unauthenticated HTTP endpoint. Prefer binding to `127.0.0.1` and use a reverse proxy for remote access.
 * Some per-process calls can fail due to permissions. The collector treats AccessDenied/InvalidPid as non-fatal and skips those processes.
 
+## Acknowledgements
+* [Mac OS X Internals](https://newosxbook.com/home.html) - amazing reference for Darwin/Mach and process/accounting internals
+
+* [ncabatoff/process-exporter (Linux)](https://github.com/ncabatoff/process-exporter) — inspiration for the exporter model and Prometheus metric shape.
+
+* [zig-obj](https://github.com/mitchellh/zig-objc) - used for Objective-C Blocks with NetworkStatistics
+
 ## License
-MIT License - See [LICENSE](https://github.com/umegbewe/darwin-exporter/blob/main/LICENSE) file for details.
+MIT License - See [LICENSE](https://github.com/umegbewe/darwin-exporter/blob/main/LICENSE) file for details. 
