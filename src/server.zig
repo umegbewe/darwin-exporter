@@ -37,7 +37,9 @@ pub const Server = struct {
 
     pub fn run(self: *Server) !void {
         const address = try std.net.Address.parseIp4(self.bind_address, self.port);
-        var server = try address.listen(.{});
+        var server = try address.listen(.{
+            .reuse_address = true
+        });
         defer server.deinit();
 
         std.log.info("listening on {s}:{d}", .{ self.bind_address, self.port });
