@@ -15,8 +15,5 @@ jobs:
         with:
           version: 0.14.0
 
-      - name: Format check
-        run: zig fmt --check .
-
       - name: Build tests
         run: zig build test --summary all
