@@ -380,7 +380,16 @@ pub fn sweepStaleSocketStats(max_age_ns: u64) void {
 
     var iter = manager.socket_map.iterator();
     while (iter.next()) |entry| {
-        if (now_ns - entry.value_ptr.last_seen_ns > max_age_ns) {
+        const last = entry.value_ptr.last_seen_ns;
+
+        if (now_ns < last) {
+            to_remove.append(entry.key_ptr.*) catch {};
+            continue;
+        }
+
+        const expire = std.math.add(u64, last, max_age_ns) catch std.math.maxInt(u64);
+
+        if (now_ns >= expire) {
             to_remove.append(entry.key_ptr.*) catch {};
         }
     }
